@@ -83,7 +83,7 @@ function App() {
         <Route
           path="/raw-materials"
           element={
-            <ProtectedRoute requiredRoles={['admin']}>
+            <ProtectedRoute requiredRoles={['admin','co-admin']}>
               <RawMaterialsPage />
             </ProtectedRoute>
           }
@@ -92,7 +92,7 @@ function App() {
         <Route
           path="/products"
           element={
-            <ProtectedRoute requiredRoles={['admin']}>
+            <ProtectedRoute requiredRoles={['admin','co-admin']}>
               <ProductsPage />
             </ProtectedRoute>
           }
@@ -101,7 +101,7 @@ function App() {
         <Route
           path="/production"
           element={
-            <ProtectedRoute requiredRoles={['admin', 'operator']}>
+            <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
               <ProductionPage />
             </ProtectedRoute>
           }
@@ -110,7 +110,7 @@ function App() {
         <Route
           path="/material-usage"
           element={
-            <ProtectedRoute requiredRoles={['admin', 'operator']}>
+            <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
               <MaterialUsagePage />
             </ProtectedRoute>
           }
@@ -119,7 +119,7 @@ function App() {
         <Route
           path="/reports"
           element={
-            <ProtectedRoute requiredRoles={['admin', 'operator']}>
+            <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
               <ReportsPage />
             </ProtectedRoute>
           }
@@ -128,7 +128,7 @@ function App() {
         <Route
           path="/purchases"
           element={
-            <ProtectedRoute requiredRoles={["admin", "operator"]}>
+            <ProtectedRoute requiredRoles={["admin", "operator", "co-admin"]}>
               <PurchasesPage />
             </ProtectedRoute>
           }
@@ -137,7 +137,7 @@ function App() {
         <Route
           path="/expenses"
           element={
-            <ProtectedRoute requiredRoles={["admin"]}>
+            <ProtectedRoute requiredRoles={["admin", "co-admin"]}>
               <ExpensesPage />
             </ProtectedRoute>
           }
@@ -146,7 +146,7 @@ function App() {
         <Route
           path="/customers"
           element={
-            <ProtectedRoute requiredRoles={["admin", "operator"]}>
+            <ProtectedRoute requiredRoles={["admin", "operator", "co-admin"]}>
               <CustomersPage />
             </ProtectedRoute>
           }
@@ -155,7 +155,7 @@ function App() {
         <Route
           path="/sales"
           element={
-            <ProtectedRoute requiredRoles={["admin"]}>
+            <ProtectedRoute requiredRoles={["admin", "co-admin"]}>
               <SalesPage />
             </ProtectedRoute>
           }
@@ -164,7 +164,7 @@ function App() {
         <Route
           path="/users"
           element={
-            <ProtectedRoute requiredRoles={['admin', 'co-admin']}>
+            <ProtectedRoute requiredRoles={['admin']}>
               <UsersPage />
             </ProtectedRoute>
           }

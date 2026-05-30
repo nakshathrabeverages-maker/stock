@@ -16,16 +16,16 @@ export const Sidebar: React.FC = () => {
 
   const navItems: NavItem[] = [
     { label: 'Dashboard', path: '/dashboard', icon: '📊' },
-    { label: 'Production', path: '/production', icon: '🏭', requiredRoles: ['admin', 'operator'] },
-    { label: 'Sales', path: '/sales', icon: '💰', requiredRoles: ['admin'] },
-    { label: 'Customers', path: '/customers', icon: '👤', requiredRoles: ['admin', 'operator'] },
-    { label: 'Material Usage', path: '/material-usage', icon: '📦', requiredRoles: ['admin', 'operator'] },
-    { label: 'Raw Materials', path: '/raw-materials', icon: '🔧', requiredRoles: ['admin', 'operator'] },
-    { label: 'Raw Material Purchases', path: '/purchases', icon: '🛒', requiredRoles: ['admin', 'operator'] },
-    { label: 'Expenses', path: '/expenses', icon: '💸', requiredRoles: ['admin'] },
-    { label: 'Products', path: '/products', icon: '📦', requiredRoles: ['admin'] },
-    { label: 'Reports', path: '/reports', icon: '📄', requiredRoles: ['admin', 'operator'] },
-    { label: 'Users', path: '/users', icon: '👥', requiredRoles: ['admin', 'co-admin'] },
+    { label: 'Production', path: '/production', icon: '🏭', requiredRoles: ['admin', 'operator', 'co-admin'] },
+    { label: 'Sales', path: '/sales', icon: '💰', requiredRoles: ['admin', 'co-admin'] },
+    { label: 'Customers', path: '/customers', icon: '👤', requiredRoles: ['admin', 'operator', 'co-admin'] },
+    { label: 'Material Usage', path: '/material-usage', icon: '📦', requiredRoles: ['admin', 'operator', 'co-admin'] },
+    { label: 'Raw Materials', path: '/raw-materials', icon: '🔧', requiredRoles: ['admin', 'operator', 'co-admin'] },
+    { label: 'Raw Material Purchases', path: '/purchases', icon: '🛒', requiredRoles: ['admin', 'operator', 'co-admin'] },
+    { label: 'Expenses', path: '/expenses', icon: '💸', requiredRoles: ['admin', 'co-admin'] },
+    { label: 'Products', path: '/products', icon: '📦', requiredRoles: ['admin', 'co-admin'] },
+    { label: 'Reports', path: '/reports', icon: '📄', requiredRoles: ['admin', 'operator', 'co-admin'] },
+    { label: 'Users', path: '/users', icon: '👥', requiredRoles: ['admin'] },
   ];
 
   const filteredItems = navItems.filter(

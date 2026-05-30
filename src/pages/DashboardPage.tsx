@@ -14,6 +14,8 @@ export const DashboardPage: React.FC = () => {
   const [totalProducts, setTotalProducts] = useState<number>(0);
   const [totalSales, setTotalSales] = useState<number>(0);
   const [totalCredit, setTotalCredit] = useState<number>(0);
+  const [currentMonthSales, setCurrentMonthSales] = useState<number>(0);
+  const [currentMonthExpenses, setCurrentMonthExpenses] = useState<number>(0);
   const [totalExpenses, setTotalExpenses] = useState<number>(0);
   const [capital, setCapital] = useState<number>(0);
   const [capitalInput, setCapitalInput] = useState<string>('0');
@@ -38,9 +40,30 @@ export const DashboardPage: React.FC = () => {
         setTodayProduction(production);
         setLowStockItems(lowStock);
         setTotalProducts(lowStock.length);
-        setTotalSales(sales.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0));
-        setTotalCredit(sales.reduce((sum, item) => sum + (item.remainingAmount ?? 0), 0));
-        setTotalExpenses(expenses.reduce((sum, item) => sum + (item.value ?? 0), 0));
+        const totalSalesVal = sales.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0);
+        const totalCreditVal = sales.reduce((sum, item) => sum + (item.remainingAmount ?? 0), 0);
+        const totalExpensesVal = expenses.reduce((sum, item) => sum + (item.value ?? 0), 0);
+
+        // current month calculations
+        const now = new Date();
+        const cmSales = sales.reduce((sum, item) => {
+          const d = new Date(item.date as any);
+          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+            ? sum + (item.totalPrice ?? 0)
+            : sum;
+        }, 0);
+        const cmExpenses = expenses.reduce((sum, item) => {
+          const d = new Date(item.date as any);
+          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+            ? sum + (item.value ?? 0)
+            : sum;
+        }, 0);
+
+        setTotalSales(totalSalesVal);
+        setTotalCredit(totalCreditVal);
+        setTotalExpenses(totalExpensesVal);
+        setCurrentMonthSales(cmSales);
+        setCurrentMonthExpenses(cmExpenses);
         setCapital(capitalValue);
         setCapitalInput(capitalValue.toString());
       } catch (err) {
@@ -83,6 +106,16 @@ export const DashboardPage: React.FC = () => {
         <Card title="Total Credit">
           <div className="text-4xl font-bold text-orange-600">₹{totalCredit.toFixed(2)}</div>
           <p className="text-gray-600 text-sm mt-2">Outstanding credit balance</p>
+        </Card>
+
+        <Card title="This Month Sales">
+          <div className="text-4xl font-bold text-green-600">₹{currentMonthSales.toFixed(2)}</div>
+          <p className="text-gray-600 text-sm mt-2">Sales in current month</p>
+        </Card>
+
+        <Card title="This Month Expenses">
+          <div className="text-4xl font-bold text-red-600">₹{currentMonthExpenses.toFixed(2)}</div>
+          <p className="text-gray-600 text-sm mt-2">Expenses in current month</p>
         </Card>
 
         <Card title="Total Expenses">
