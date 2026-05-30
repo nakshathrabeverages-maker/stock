@@ -94,6 +94,7 @@ export const PurchasesPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Unit</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Price</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Supplier</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Created By</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Remarks</th>
               </tr>
             </thead>
@@ -107,6 +108,7 @@ export const PurchasesPage: React.FC = () => {
                     <td className="px-6 py-4 text-sm font-semibold text-gray-800">{p.quantity} {material?.unit}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{p.price?.toFixed(2) || '0.00'}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{p.supplier || '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-800">{p.createdBy || '-'}</td>
                     <td className="px-6 py-4 text-sm text-gray-600">{p.remarks || '-'}</td>
                   </tr>
                 );

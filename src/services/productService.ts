@@ -59,12 +59,13 @@ export const productService = {
   },
 
   // Create new product
-  async create(data: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) {
+  async create(data: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>, userId: string) {
     try {
       const now = Timestamp.now();
       const docRef = await addDoc(collection(db, COLLECTION), {
         ...data,
         currentStock: data.currentStock ?? 0,
+        createdBy: userId,
         createdAt: now,
         updatedAt: now,
       });
@@ -72,6 +73,7 @@ export const productService = {
       return {
         ...data,
         id: docRef.id,
+        createdBy: userId,
         createdAt: now.toDate(),
         updatedAt: now.toDate(),
       } as Product;

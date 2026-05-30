@@ -265,6 +265,10 @@ export const MaterialUsagePage: React.FC = () => {
                 </th>
 
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  Created By
+                </th>
+
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                   Actions
                 </th>
               </tr>
@@ -298,6 +302,10 @@ export const MaterialUsagePage: React.FC = () => {
 
                       <td className="px-6 py-4 text-sm text-gray-600">
                         {entry.remarks || '-'}
+                      </td>
+
+                      <td className="px-6 py-4 text-sm text-gray-800">
+                        {entry.createdBy || '-'}
                       </td>
 
                       <td className="px-6 py-4 text-sm space-x-2">

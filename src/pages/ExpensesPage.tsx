@@ -96,6 +96,7 @@ export const ExpensesPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Type</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Subtype</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Value</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Created By</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Remarks</th>
               </tr>
             </thead>
@@ -106,6 +107,7 @@ export const ExpensesPage: React.FC = () => {
                   <td className="px-6 py-4 text-sm text-gray-800">{e.type}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.subtype || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.value}</td>
+                  <td className="px-6 py-4 text-sm text-gray-800">{e.createdBy || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.remarks || '-'}</td>
                 </tr>
               ))}

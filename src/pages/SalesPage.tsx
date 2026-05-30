@@ -215,6 +215,7 @@ export const SalesPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Paid</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Remaining</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Created By</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Actions</th>
               </tr>
             </thead>
@@ -233,6 +234,7 @@ export const SalesPage: React.FC = () => {
                     <td className="px-6 py-4 text-sm text-gray-800">₹{(entry.paidAmount ?? 0).toFixed(2)}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">₹{(entry.remainingAmount ?? 0).toFixed(2)}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{entry.paymentStatus}</td>
+                    <td className="px-6 py-4 text-sm text-gray-800">{entry.createdBy || '-'}</td>
                     <td className="px-6 py-4 text-sm space-x-2">
                       <Button variant="secondary" size="sm" onClick={() => handleEdit(entry)}>
                         Edit

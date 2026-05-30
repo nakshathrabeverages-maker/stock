@@ -45,11 +45,12 @@ export const customerService = {
     }
   },
 
-  async create(data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>) {
+  async create(data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>, userId: string) {
     try {
       const now = Timestamp.now();
       const docRef = await addDoc(collection(db, COLLECTION), {
         ...data,
+        createdBy: userId,
         createdAt: now,
         updatedAt: now,
       });
@@ -57,6 +58,7 @@ export const customerService = {
       return {
         ...data,
         id: docRef.id,
+        createdBy: userId,
         createdAt: now.toDate(),
         updatedAt: now.toDate(),
       } as Customer;

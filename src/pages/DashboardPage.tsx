@@ -2,16 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { Layout, Card, Alert, Loading, Button } from '@/components';
 import { useAuthStore } from '@/store/authStore';
 import { productionService } from '@/services/productionService';
+import { productService } from '@/services/productService';
 import { rawMaterialService } from '@/services/rawMaterialService';
 import { salesService } from '@/services/salesService';
 import { expenseService } from '@/services/expenseService';
 import { settingsService } from '@/services/settingsService';
-import { RawMaterial } from '@/types';
+import { Product, RawMaterial } from '@/types';
 
 export const DashboardPage: React.FC = () => {
   const [todayProduction, setTodayProduction] = useState<number>(0);
   const [lowStockItems, setLowStockItems] = useState<RawMaterial[]>([]);
   const [totalProducts, setTotalProducts] = useState<number>(0);
+  const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
   const [totalSales, setTotalSales] = useState<number>(0);
   const [totalCredit, setTotalCredit] = useState<number>(0);
   const [currentMonthSales, setCurrentMonthSales] = useState<number>(0);
@@ -29,17 +31,21 @@ export const DashboardPage: React.FC = () => {
     const fetchDashboardData = async () => {
       try {
         setLoading(true);
-        const [production, lowStock, sales, expenses, capitalValue] = await Promise.all([
+        const [production, lowStock, sales, expenses, capitalValue, products] = await Promise.all([
           productionService.getTodayProduction(),
           rawMaterialService.getLowStockItems(),
           salesService.getAll(),
           expenseService.getAll(),
           settingsService.getValue('capital'),
+          productService.getAll(true),
         ]);
+
+        const available = products.filter((product) => product.currentStock > 0);
 
         setTodayProduction(production);
         setLowStockItems(lowStock);
         setTotalProducts(lowStock.length);
+        setAvailableProducts(available);
         const totalSalesVal = sales.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0);
         const totalCreditVal = sales.reduce((sum, item) => sum + (item.remainingAmount ?? 0), 0);
         const totalExpensesVal = expenses.reduce((sum, item) => sum + (item.value ?? 0), 0);
@@ -90,7 +96,7 @@ export const DashboardPage: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
         <Card title="Today's Production">
           <div className="text-4xl font-bold text-primary">{todayProduction}</div>
-          <p className="text-gray-600 text-sm mt-2">Bottles Produced</p>
+          <p className="text-gray-600 text-sm mt-2">Cases Produced</p>
         </Card>
 
         <Card title="Low Stock Items">
@@ -158,13 +164,30 @@ export const DashboardPage: React.FC = () => {
       )}
 
       {/* Quick Stats */}
+      <Card title="Product Availability" subtitle="Live products in stock" className="mb-6">
+        {availableProducts.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {availableProducts.slice(0, 8).map((product) => (
+              <div key={product.id} className="p-4 bg-green-50 rounded-lg border border-green-100">
+                <p className="font-semibold text-gray-800">{product.name}</p>
+                <p className="text-sm text-gray-600">Stock: {product.currentStock}</p>
+                <p className="text-xs text-gray-500">Status: {product.status}</p>
+              </div>
+            ))}
+            {availableProducts.length > 8 && (
+              <div className="p-4 bg-white rounded-lg border border-gray-200 col-span-full text-sm text-gray-600">
+                +{availableProducts.length - 8} more products available
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-600">No products with stock available right now.</p>
+        )}
+      </Card>
+
       <Card title="Quick Stats" subtitle="System overview">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="text-center p-4 bg-blue-50 rounded-lg">
-            <p className="text-2xl font-bold text-blue-600">100%</p>
-            <p className="text-xs text-gray-600 mt-1">System Health</p>
-          </div>
-          <div className="text-center p-4 bg-green-50 rounded-lg">
             <p className="text-2xl font-bold text-green-600">{totalSales > 0 ? '₹' + totalSales.toFixed(0) : '₹0'}</p>
             <p className="text-xs text-gray-600 mt-1">Total Sales</p>
           </div>

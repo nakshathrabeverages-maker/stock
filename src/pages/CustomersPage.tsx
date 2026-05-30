@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Card, Button, Input, Modal, Alert, Loading } from '@/components';
 import { customerService } from '@/services/customerService';
+import { authService } from '@/services/authService';
 import { Customer } from '@/types';
 
 export const CustomersPage: React.FC = () => {
@@ -67,7 +68,12 @@ export const CustomersPage: React.FC = () => {
       if (editingId) {
         await customerService.update(editingId, formData);
       } else {
-        await customerService.create(formData);
+        const userId = authService.getCurrentUser()?.uid;
+        if (!userId) {
+          setError('User not authenticated');
+          return;
+        }
+        await customerService.create(formData as any, userId);
       }
       setIsModalOpen(false);
       fetchCustomers();
@@ -105,6 +111,9 @@ export const CustomersPage: React.FC = () => {
                 </p>
                 <p>
                   <span className="font-semibold">Email:</span> {customer.email || '-'}
+                </p>
+                <p>
+                  <span className="font-semibold">Created By:</span> {customer.createdBy || 'N/A'}
                 </p>
               </div>
               <div className="flex gap-2 pt-2">

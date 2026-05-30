@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Card, Button, Input, Modal, Alert, Loading } from '@/components';
 import { productService } from '@/services/productService';
+import { authService } from '@/services/authService';
 import { Product } from '@/types';
 
 export const ProductsPage: React.FC = () => {
@@ -69,7 +70,12 @@ export const ProductsPage: React.FC = () => {
       if (editingId) {
         await productService.update(editingId, formData);
       } else {
-        await productService.create(formData);
+        const userId = authService.getCurrentUser()?.uid;
+        if (!userId) {
+          setError('User not authenticated');
+          return;
+        }
+        await productService.create(formData as any, userId);
       }
       setIsModalOpen(false);
       fetchProducts();
@@ -129,6 +135,10 @@ export const ProductsPage: React.FC = () => {
                 >
                   {product.status === 'active' ? 'Active' : 'Inactive'}
                 </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600 text-sm">Created By:</span>
+                <span className="font-semibold text-gray-800">{product.createdBy || 'N/A'}</span>
               </div>
               <div className="flex gap-2 pt-4">
                 <Button

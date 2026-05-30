@@ -42,6 +42,7 @@ export interface Product {
   bottleSize: string;
   currentStock: number;
   status: 'active' | 'inactive';
+  createdBy: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -53,6 +54,7 @@ export interface Customer {
   firmName: string;
   phone: string;
   email?: string;
+  createdBy: string;
   createdAt: Date;
   updatedAt: Date;
 }

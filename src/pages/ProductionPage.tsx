@@ -131,6 +131,7 @@ export const ProductionPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Product</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Quantity</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Remarks</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Created By</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Actions</th>
               </tr>
             </thead>
@@ -145,6 +146,7 @@ export const ProductionPage: React.FC = () => {
                     <td className="px-6 py-4 text-sm text-gray-800">{product?.name || 'N/A'}</td>
                     <td className="px-6 py-4 text-sm text-gray-800 font-semibold">{entry.quantity}</td>
                     <td className="px-6 py-4 text-sm text-gray-600">{entry.remarks || '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-800">{entry.createdBy || '-'}</td>
                     <td className="px-6 py-4 text-sm space-x-2">
                       <Button variant="secondary" size="sm" onClick={() => handleEdit(entry)}>
                         Edit
