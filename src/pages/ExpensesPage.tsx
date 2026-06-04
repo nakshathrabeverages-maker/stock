@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Card, Button, Input, Select, Modal, Alert, Loading } from '@/components';
 import { expenseService } from '@/services/expenseService';
+import { userService } from '@/services/userService';
 import { ExpenseEntry } from '@/types';
 
 const EXPENSE_TYPES = [
@@ -16,6 +17,7 @@ const EXPENSE_TYPES = [
 
 export const ExpensesPage: React.FC = () => {
   const [entries, setEntries] = useState<ExpenseEntry[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -35,8 +37,9 @@ export const ExpensesPage: React.FC = () => {
   const fetchExpenses = async () => {
     try {
       setLoading(true);
-      const data = await expenseService.getAll();
+      const [data, users] = await Promise.all([expenseService.getAll(), userService.getAll()]);
       setEntries(data);
+      setUserMap(Object.fromEntries(users.map((user) => [user.id, user.email || user.name || user.id])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch expenses');
     } finally {
@@ -107,7 +110,7 @@ export const ExpensesPage: React.FC = () => {
                   <td className="px-6 py-4 text-sm text-gray-800">{e.type}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.subtype || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.value}</td>
-                  <td className="px-6 py-4 text-sm text-gray-800">{e.createdBy || '-'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-800">{userMap[e.createdBy] || e.createdBy || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.remarks || '-'}</td>
                 </tr>
               ))}

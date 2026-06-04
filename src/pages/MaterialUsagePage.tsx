@@ -12,6 +12,7 @@ import {
 
 import { materialUsageService } from '@/services/materialUsageService';
 import { rawMaterialService } from '@/services/rawMaterialService';
+import { userService } from '@/services/userService';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
 
@@ -23,6 +24,7 @@ import {
 export const MaterialUsagePage: React.FC = () => {
   const [entries, setEntries] = useState<MaterialUsageEntry[]>([]);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
 
   const [loading, setLoading] = useState(true);
 
@@ -54,14 +56,17 @@ export const MaterialUsagePage: React.FC = () => {
     try {
       setLoading(true);
 
-      const usageData = await materialUsageService.getAll();
-
-      const materialList = await rawMaterialService.getAll({
-        isActive: true,
-      });
+      const [usageData, materialList, users] = await Promise.all([
+        materialUsageService.getAll(),
+        rawMaterialService.getAll({
+          isActive: true,
+        }),
+        userService.getAll(),
+      ]);
 
       setEntries(usageData);
       setMaterials(materialList);
+      setUserMap(Object.fromEntries(users.map((user) => [user.id, user.email || user.name || user.id])));
 
     } catch (err) {
       setError(
@@ -305,7 +310,7 @@ export const MaterialUsagePage: React.FC = () => {
                       </td>
 
                       <td className="px-6 py-4 text-sm text-gray-800">
-                        {entry.createdBy || '-'}
+                        {userMap[entry.createdBy] || entry.createdBy || '-'}
                       </td>
 
                       <td className="px-6 py-4 text-sm space-x-2">

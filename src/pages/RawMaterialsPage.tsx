@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Card, Button, Input, Select, Modal, Alert, Loading } from '@/components';
 import { rawMaterialService } from '@/services/rawMaterialService';
+import { userService } from '@/services/userService';
 import { authService } from '@/services/authService';
 import { RawMaterial, RawMaterialCategory } from '@/types';
 
@@ -16,6 +17,7 @@ const CATEGORIES: Array<{ value: RawMaterialCategory; label: string }> = [
 
 export const RawMaterialsPage: React.FC = () => {
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -37,8 +39,12 @@ export const RawMaterialsPage: React.FC = () => {
   const fetchMaterials = async () => {
     try {
       setLoading(true);
-      const data = await rawMaterialService.getAll({ isActive: true });
+      const [data, users] = await Promise.all([
+        rawMaterialService.getAll({ isActive: true }),
+        userService.getAll(),
+      ]);
       setMaterials(data);
+      setUserMap(Object.fromEntries(users.map((user) => [user.id, user.email || user.name || user.id])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch materials');
     } finally {
@@ -151,7 +157,7 @@ export const RawMaterialsPage: React.FC = () => {
                     {material.minimumStockLevel} {material.unit}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-800">{new Date(material.dateAdded).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 text-sm text-gray-800">{material.createdBy}</td>
+                  <td className="px-6 py-4 text-sm text-gray-800">{userMap[material.createdBy] || material.createdBy || '-'}</td>
                   <td className="px-6 py-4">
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-medium ${

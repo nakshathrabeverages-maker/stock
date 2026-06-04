@@ -67,6 +67,11 @@ const REPORT_SORT_OPTIONS: Record<string, { value: string; label: string }[]> = 
     { value: 'currentStock', label: 'Current Stock' },
     { value: 'minimumStockLevel', label: 'Min Level' },
   ],
+  productAvailability: [
+    { value: 'name', label: 'Product' },
+    { value: 'currentStock', label: 'Available Stock' },
+    { value: 'status', label: 'Status' },
+  ],
 };
 
 export const ReportsPage: React.FC = () => {
@@ -84,6 +89,7 @@ export const ReportsPage: React.FC = () => {
   >([]);
   const [expenseData, setExpenseData] = useState<ExpenseEntry[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productAvailabilityData, setProductAvailabilityData] = useState<Product[]>([]);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [reportFilter, setReportFilter] = useState('');
@@ -203,6 +209,10 @@ export const ReportsPage: React.FC = () => {
       } else if (type === 'stock') {
         const data = await rawMaterialService.getAll({ isActive: true });
         // setLowStockData(data);
+      } else if (type === 'productAvailability') {
+        const data = await productService.getAll(false);
+        const activeProducts = data.filter((product) => product.status === 'active');
+        setProductAvailabilityData(activeProducts);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate report');
@@ -316,6 +326,20 @@ export const ReportsPage: React.FC = () => {
     [stockRows, reportFilter, reportSortKey, reportSortDirection]
   );
 
+  const productAvailabilityRows = useMemo(
+    () =>
+      productAvailabilityData.map((product) => ({
+        ...product,
+        currentStock: product.currentStock,
+      })),
+    [productAvailabilityData]
+  );
+
+  const filteredProductAvailabilityRows = useMemo(
+    () => applyFilterAndSort(productAvailabilityRows, ['name', 'currentStock', 'status']),
+    [productAvailabilityRows, reportFilter, reportSortKey, reportSortDirection]
+  );
+
   return (
     <Layout title="Reports" subtitle="View and generate reports">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
@@ -336,12 +360,13 @@ export const ReportsPage: React.FC = () => {
                 { value: 'revenue', label: 'Revenue Summary' },
                 { value: 'stock', label: 'Stock Report' },
                 { value: 'lowstock', label: 'Low Stock Alert' },
+                { value: 'productAvailability', label: 'Product Availability' },
               ]}
               value={reportType}
               onChange={(e) => setReportType(e.target.value)}
             />
 
-            {reportType !== 'stock' && reportType !== 'lowstock' && (
+            {reportType !== 'stock' && reportType !== 'lowstock' && reportType !== 'productAvailability' && (
               <>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
@@ -463,6 +488,35 @@ export const ReportsPage: React.FC = () => {
       )}
 
       {/* Usage Report */}
+      {reportType === 'productAvailability' && (
+        <Card title="Product Availability Report">
+          {filteredProductAvailabilityRows.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-semibold">Product</th>
+                    <th className="px-4 py-2 text-right font-semibold">Available Stock</th>
+                    <th className="px-4 py-2 text-left font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y bg-white">
+                  {filteredProductAvailabilityRows.map((product) => (
+                    <tr key={product.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2">{product.name}</td>
+                      <td className="px-4 py-2 text-right font-semibold">{product.currentStock}</td>
+                      <td className="px-4 py-2 capitalize">{product.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-gray-600">No product availability data found.</p>
+          )}
+        </Card>
+      )}
+
       {reportType === 'usage' && (
         <Card title="Raw Material Usage Report">
           {filteredUsageRows.length > 0 ? (

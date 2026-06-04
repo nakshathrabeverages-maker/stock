@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Layout, Card, Button, Select, Input, Modal, Alert, Loading } from '@/components';
 import { purchaseService } from '@/services/purchaseService';
 import { rawMaterialService } from '@/services/rawMaterialService';
+import { userService } from '@/services/userService';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
 import { PurchaseEntry, RawMaterial } from '@/types';
@@ -9,9 +10,11 @@ import { PurchaseEntry, RawMaterial } from '@/types';
 export const PurchasesPage: React.FC = () => {
   const [purchases, setPurchases] = useState<PurchaseEntry[]>([]);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const { user } = useAuthStore();
 
   const [formData, setFormData] = useState<Omit<PurchaseEntry, 'id' | 'createdAt' | 'updatedAt'>>({
@@ -31,9 +34,14 @@ export const PurchasesPage: React.FC = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [pList, mList] = await Promise.all([purchaseService.getAll(), rawMaterialService.getAll({ isActive: true })]);
+      const [pList, mList, users] = await Promise.all([
+        purchaseService.getAll(),
+        rawMaterialService.getAll({ isActive: true }),
+        userService.getAll(),
+      ]);
       setPurchases(pList);
       setMaterials(mList);
+      setUserMap(Object.fromEntries(users.map((user) => [user.id, user.email || user.name || user.id])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch purchases');
     } finally {
@@ -42,8 +50,37 @@ export const PurchasesPage: React.FC = () => {
   };
 
   const handleAddNew = () => {
+    setEditingId(null);
     setFormData({ rawMaterialId: '', quantity: 0, supplier: '', price: 0, date: new Date(), remarks: '', createdBy: '' } as any);
     setIsModalOpen(true);
+  };
+
+  const handleEdit = (purchase: PurchaseEntry) => {
+    setEditingId(purchase.id);
+    setFormData({
+      rawMaterialId: purchase.rawMaterialId,
+      quantity: purchase.quantity,
+      supplier: purchase.supplier || '',
+      price: purchase.price,
+      date: purchase.date,
+      remarks: purchase.remarks || '',
+      createdBy: purchase.createdBy,
+    } as any);
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Delete this purchase and adjust stock?')) return;
+    try {
+      setLoading(true);
+      await purchaseService.delete(id);
+      await fetchData();
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete purchase');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -60,8 +97,13 @@ export const PurchasesPage: React.FC = () => {
 
     try {
       setLoading(true);
-      await purchaseService.create(formData as any, userId);
+      if (editingId) {
+        await purchaseService.update(editingId, formData as any);
+      } else {
+        await purchaseService.create(formData as any, userId);
+      }
       setIsModalOpen(false);
+      setEditingId(null);
       await fetchData();
       setError('');
     } catch (err) {
@@ -96,6 +138,7 @@ export const PurchasesPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Supplier</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Created By</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Remarks</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -108,8 +151,16 @@ export const PurchasesPage: React.FC = () => {
                     <td className="px-6 py-4 text-sm font-semibold text-gray-800">{p.quantity} {material?.unit}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{p.price?.toFixed(2) || '0.00'}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{p.supplier || '-'}</td>
-                    <td className="px-6 py-4 text-sm text-gray-800">{p.createdBy || '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-800">{userMap[p.createdBy] || p.createdBy || '-'}</td>
                     <td className="px-6 py-4 text-sm text-gray-600">{p.remarks || '-'}</td>
+                    <td className="px-6 py-4 text-sm space-x-2">
+                      <Button variant="secondary" size="sm" onClick={() => handleEdit(p)}>
+                        Edit
+                      </Button>
+                      <Button variant="danger" size="sm" onClick={() => handleDelete(p.id)}>
+                        Delete
+                      </Button>
+                    </td>
                   </tr>
                 );
               })}
@@ -120,10 +171,13 @@ export const PurchasesPage: React.FC = () => {
 
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Add Purchase"
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingId(null);
+        }}
+        title={editingId ? 'Edit Purchase' : 'Add Purchase'}
         size="md"
-        footer={<div className="flex gap-4 justify-end"><Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save</Button></div>}
+        footer={<div className="flex gap-4 justify-end"><Button variant="outline" onClick={() => { setIsModalOpen(false); setEditingId(null); }}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save</Button></div>}
       >
         <div className="space-y-4">
           <Input label="Date" type="date" value={formData.date instanceof Date ? formData.date.toISOString().split('T')[0] : ''} onChange={(e) => setFormData({ ...formData, date: new Date(e.target.value) } as any)} />

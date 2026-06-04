@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Card, Button, Input, Modal, Alert, Loading } from '@/components';
 import { customerService } from '@/services/customerService';
+import { userService } from '@/services/userService';
 import { authService } from '@/services/authService';
 import { Customer } from '@/types';
 
 export const CustomersPage: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -25,8 +27,9 @@ export const CustomersPage: React.FC = () => {
   const fetchCustomers = async () => {
     try {
       setLoading(true);
-      const data = await customerService.getAll();
+      const [data, users] = await Promise.all([customerService.getAll(), userService.getAll()]);
       setCustomers(data);
+      setUserMap(Object.fromEntries(users.map((user) => [user.id, user.email || user.name || user.id])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch customers');
     } finally {
@@ -56,6 +59,20 @@ export const CustomersPage: React.FC = () => {
       email: customer.email || '',
     });
     setIsModalOpen(true);
+  };
+
+  const handleDelete = async (customerId: string) => {
+    if (!window.confirm('Are you sure you want to delete this customer?')) return;
+    try {
+      setLoading(true);
+      await customerService.delete(customerId);
+      await fetchCustomers();
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete customer');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -113,12 +130,15 @@ export const CustomersPage: React.FC = () => {
                   <span className="font-semibold">Email:</span> {customer.email || '-'}
                 </p>
                 <p>
-                  <span className="font-semibold">Created By:</span> {customer.createdBy || 'N/A'}
+                  <span className="font-semibold">Created By:</span> {userMap[customer.createdBy] || customer.createdBy || 'N/A'}
                 </p>
               </div>
               <div className="flex gap-2 pt-2">
                 <Button variant="secondary" size="sm" onClick={() => handleEdit(customer)} className="flex-1">
                   Edit
+                </Button>
+                <Button variant="danger" size="sm" onClick={() => handleDelete(customer.id)}>
+                  Delete
                 </Button>
               </div>
             </div>

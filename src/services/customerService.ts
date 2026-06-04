@@ -4,6 +4,7 @@ import {
   getDoc,
   addDoc,
   updateDoc,
+  deleteDoc,
   doc,
   Timestamp,
 } from 'firebase/firestore';
@@ -78,6 +79,15 @@ export const customerService = {
       return { success: true };
     } catch (error) {
       throw new Error(`Failed to update customer: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      await deleteDoc(doc(db, COLLECTION, id));
+      return { success: true };
+    } catch (error) {
+      throw new Error(`Failed to delete customer: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   },
 };

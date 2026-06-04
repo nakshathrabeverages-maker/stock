@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Card, Button, Input, Modal, Alert, Loading } from '@/components';
 import { productService } from '@/services/productService';
+import { userService } from '@/services/userService';
 import { authService } from '@/services/authService';
 import { Product } from '@/types';
 
 export const ProductsPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -24,8 +26,9 @@ export const ProductsPage: React.FC = () => {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const data = await productService.getAll(false);
+      const [data, users] = await Promise.all([productService.getAll(false), userService.getAll()]);
       setProducts(data);
+      setUserMap(Object.fromEntries(users.map((user) => [user.id, user.email || user.name || user.id])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch products');
     } finally {
@@ -138,7 +141,7 @@ export const ProductsPage: React.FC = () => {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-600 text-sm">Created By:</span>
-                <span className="font-semibold text-gray-800">{product.createdBy || 'N/A'}</span>
+                <span className="font-semibold text-gray-800">{userMap[product.createdBy] || product.createdBy || 'N/A'}</span>
               </div>
               <div className="flex gap-2 pt-4">
                 <Button

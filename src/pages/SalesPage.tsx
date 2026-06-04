@@ -3,6 +3,7 @@ import { Layout, Card, Button, Input, Select, Modal, Alert, Loading } from '@/co
 import { salesService } from '@/services/salesService';
 import { productService } from '@/services/productService';
 import { customerService } from '@/services/customerService';
+import { userService } from '@/services/userService';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
 import { SaleEntry, Product, Customer } from '@/types';
@@ -11,6 +12,7 @@ export const SalesPage: React.FC = () => {
   const [entries, setEntries] = useState<SaleEntry[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -38,14 +40,16 @@ export const SalesPage: React.FC = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [salesData, productsData, customersData] = await Promise.all([
+      const [salesData, productsData, customersData, users] = await Promise.all([
         salesService.getAll(),
         productService.getAll(),
         customerService.getAll(),
+        userService.getAll(),
       ]);
       setEntries(salesData);
       setProducts(productsData);
       setCustomers(customersData);
+      setUserMap(Object.fromEntries(users.map((user) => [user.id, user.email || user.name || user.id])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch sales data');
     } finally {
@@ -234,7 +238,7 @@ export const SalesPage: React.FC = () => {
                     <td className="px-6 py-4 text-sm text-gray-800">₹{(entry.paidAmount ?? 0).toFixed(2)}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">₹{(entry.remainingAmount ?? 0).toFixed(2)}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{entry.paymentStatus}</td>
-                    <td className="px-6 py-4 text-sm text-gray-800">{entry.createdBy || '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-800">{userMap[entry.createdBy] || entry.createdBy || '-'}</td>
                     <td className="px-6 py-4 text-sm space-x-2">
                       <Button variant="secondary" size="sm" onClick={() => handleEdit(entry)}>
                         Edit

@@ -37,14 +37,14 @@ export const DashboardPage: React.FC = () => {
           salesService.getAll(),
           expenseService.getAll(),
           settingsService.getValue('capital'),
-          productService.getAll(true),
+          productService.getAll(false),
         ]);
 
-        const available = products.filter((product) => product.currentStock > 0);
+        const available = products.filter((product) => product.currentStock > 0 && product.status === 'active');
 
         setTodayProduction(production);
         setLowStockItems(lowStock);
-        setTotalProducts(lowStock.length);
+        setTotalProducts(products.length);
         setAvailableProducts(available);
         const totalSalesVal = sales.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0);
         const totalCreditVal = sales.reduce((sum, item) => sum + (item.remainingAmount ?? 0), 0);
@@ -166,22 +166,28 @@ export const DashboardPage: React.FC = () => {
       {/* Quick Stats */}
       <Card title="Product Availability" subtitle="Live products in stock" className="mb-6">
         {availableProducts.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {availableProducts.slice(0, 8).map((product) => (
-              <div key={product.id} className="p-4 bg-green-50 rounded-lg border border-green-100">
-                <p className="font-semibold text-gray-800">{product.name}</p>
-                <p className="text-sm text-gray-600">Stock: {product.currentStock}</p>
-                <p className="text-xs text-gray-500">Status: {product.status}</p>
-              </div>
-            ))}
-            {availableProducts.length > 8 && (
-              <div className="p-4 bg-white rounded-lg border border-gray-200 col-span-full text-sm text-gray-600">
-                +{availableProducts.length - 8} more products available
-              </div>
-            )}
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold">Product</th>
+                  <th className="px-4 py-3 text-right font-semibold">Available Stock</th>
+                  <th className="px-4 py-3 text-left font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y bg-white">
+                {availableProducts.map((product) => (
+                  <tr key={product.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">{product.name}</td>
+                    <td className="px-4 py-3 text-right font-semibold">{product.currentStock}</td>
+                    <td className="px-4 py-3 capitalize">{product.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
-          <p className="text-sm text-gray-600">No products with stock available right now.</p>
+          <p className="text-sm text-gray-600">No active products with stock available right now.</p>
         )}
       </Card>
 
