@@ -18,6 +18,10 @@ export const SalesPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<'date' | 'customer' | 'status'>('date');
+  const [customerFilter, setCustomerFilter] = useState('');
+  const [productFilter, setProductFilter] = useState('');
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
   const { user } = useAuthStore();
 
   const [formData, setFormData] = useState<Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>>({
@@ -96,8 +100,29 @@ export const SalesPage: React.FC = () => {
     [formData.quantity, formData.pricePerCase]
   );
 
+  const filteredEntries = useMemo(() => {
+    const startDate = startDateFilter ? new Date(startDateFilter) : null;
+    const endDate = endDateFilter ? new Date(endDateFilter) : null;
+    if (endDate) {
+      endDate.setHours(23, 59, 59, 999);
+    }
+
+    return entries.filter((entry) => {
+      const customerName = customers.find((c) => c.id === entry.customerId)?.name || '';
+      const productName = products.find((p) => p.id === entry.productId)?.name || '';
+      const entryDate = new Date(entry.date);
+
+      const matchesCustomer = customerFilter ? entry.customerId === customerFilter : true;
+      const matchesProduct = productFilter ? entry.productId === productFilter : true;
+      const matchesStartDate = startDate ? entryDate >= startDate : true;
+      const matchesEndDate = endDate ? entryDate <= endDate : true;
+
+      return matchesCustomer && matchesProduct && matchesStartDate && matchesEndDate;
+    });
+  }, [entries, customers, products, customerFilter, productFilter, startDateFilter, endDateFilter]);
+
   const sortedEntries = useMemo(() => {
-    return [...entries].sort((a, b) => {
+    return [...filteredEntries].sort((a, b) => {
       if (sortKey === 'customer') {
         const customerA = customers.find((c) => c.id === a.customerId)?.name || '';
         const customerB = customers.find((c) => c.id === b.customerId)?.name || '';
@@ -110,7 +135,7 @@ export const SalesPage: React.FC = () => {
 
       return new Date(b.date).getTime() - new Date(a.date).getTime();
     });
-  }, [entries, customers, sortKey]);
+  }, [filteredEntries, customers, sortKey]);
 
   const computedRemaining = useMemo(() => {
     const rem = computedTotal - (formData.paidAmount || 0);
@@ -187,22 +212,55 @@ export const SalesPage: React.FC = () => {
     <Layout title="Sales" subtitle="Record sales by customer and product">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
 
-      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <Button variant="primary" onClick={handleAddNew}>
-          ➕ Add Sale
-        </Button>
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-gray-700">Sort by:</label>
-          <Select
-            options={[
-              { value: 'date', label: 'Date' },
-              { value: 'customer', label: 'Customer' },
-              { value: 'status', label: 'Payment Status' },
-            ]}
-            value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as 'date' | 'customer' | 'status')}
-          />
+      <div className="mb-6 space-y-4">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <Button variant="primary" onClick={handleAddNew}>
+            ➕ Add Sale
+          </Button>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-gray-700">Sort by:</label>
+            <Select
+              options={[
+                { value: 'date', label: 'Date' },
+                { value: 'customer', label: 'Customer' },
+                { value: 'status', label: 'Payment Status' },
+              ]}
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as 'date' | 'customer' | 'status')}
+            />
+          </div>
         </div>
+
+        <Card className="p-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <Select
+              label="Filter by Customer"
+              placeholder="All customers"
+              options={[{ value: '', label: 'All customers' }, ...customerOptions]}
+              value={customerFilter}
+              onChange={(e) => setCustomerFilter(e.target.value)}
+            />
+            <Select
+              label="Filter by Product"
+              placeholder="All products"
+              options={[{ value: '', label: 'All products' }, ...productOptions]}
+              value={productFilter}
+              onChange={(e) => setProductFilter(e.target.value)}
+            />
+            <Input
+              label="Start Date"
+              type="date"
+              value={startDateFilter}
+              onChange={(e) => setStartDateFilter(e.target.value)}
+            />
+            <Input
+              label="End Date"
+              type="date"
+              value={endDateFilter}
+              onChange={(e) => setEndDateFilter(e.target.value)}
+            />
+          </div>
+        </Card>
       </div>
 
       <Card>

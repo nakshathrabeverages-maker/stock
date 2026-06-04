@@ -106,6 +106,36 @@ export const ReportsPage: React.FC = () => {
     return String(a).localeCompare(String(b));
   };
 
+  const sanitizeCsvValue = (value: any) => {
+    const stringValue = value === undefined || value === null ? '' : String(value);
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  };
+
+  const downloadCsv = (rows: any[], headers: { label: string; key: string }[], filename: string) => {
+    const csvRows = [headers.map((header) => sanitizeCsvValue(header.label)).join(',')];
+    rows.forEach((row) => {
+      csvRows.push(
+        headers
+          .map((header) => {
+            const value = row[header.key];
+            return sanitizeCsvValue(value);
+          })
+          .join(',')
+      );
+    });
+
+    const csvContent = csvRows.join('\r\n');
+    const blob = new Blob(["\ufeff", csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const applyFilterAndSort = <T extends Record<string, any>>(items: T[], searchableKeys: string[]) => {
     let result = items;
     if (reportFilter.trim()) {
@@ -226,7 +256,105 @@ export const ReportsPage: React.FC = () => {
   };
 
   const handleExport = () => {
-    alert('Export functionality will be implemented soon!');
+    let rows: any[] = [];
+    let headers: { label: string; key: string }[] = [];
+    const fileName = `${reportType}-report-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    switch (reportType) {
+      case 'production':
+        rows = filteredProductionRows;
+        headers = [
+          { label: 'Date', key: 'dateLabel' },
+          { label: 'Product', key: 'productName' },
+          { label: 'Quantity', key: 'quantity' },
+          { label: 'Remarks', key: 'remarks' },
+        ];
+        break;
+      case 'usage':
+        rows = filteredUsageRows;
+        headers = [
+          { label: 'Date', key: 'dateLabel' },
+          { label: 'Material', key: 'materialName' },
+          { label: 'Quantity', key: 'quantity' },
+          { label: 'Unit', key: 'unit' },
+          { label: 'Remarks', key: 'remarks' },
+        ];
+        break;
+      case 'purchases':
+        rows = filteredPurchaseRows;
+        headers = [
+          { label: 'Date', key: 'dateLabel' },
+          { label: 'Material', key: 'materialName' },
+          { label: 'Quantity', key: 'quantity' },
+          { label: 'Unit', key: 'unit' },
+          { label: 'Price', key: 'price' },
+          { label: 'Supplier', key: 'supplier' },
+          { label: 'Remarks', key: 'remarks' },
+        ];
+        break;
+      case 'sales':
+        rows = filteredSalesRows;
+        headers = [
+          { label: 'Date', key: 'dateLabel' },
+          { label: 'Product', key: 'productName' },
+          { label: 'Customer', key: 'customerName' },
+          { label: 'Quantity', key: 'quantity' },
+          { label: 'Price per Case', key: 'pricePerCase' },
+          { label: 'Total Price', key: 'totalPrice' },
+          { label: 'Paid Amount', key: 'paidAmount' },
+          { label: 'Remaining Amount', key: 'remainingAmount' },
+          { label: 'Status', key: 'paymentStatus' },
+        ];
+        break;
+      case 'credit':
+        rows = filteredCreditReport;
+        headers = [
+          { label: 'Customer', key: 'customerName' },
+          { label: 'Outstanding Credit', key: 'totalCredit' },
+          { label: 'Orders', key: 'orders' },
+        ];
+        rows = rows.map((row) => ({ ...row, orders: row.orders?.length ?? 0 }));
+        break;
+      case 'expenses':
+        rows = filteredExpenseRows;
+        headers = [
+          { label: 'Date', key: 'date' },
+          { label: 'Type', key: 'type' },
+          { label: 'Subtype', key: 'subtype' },
+          { label: 'Amount', key: 'value' },
+          { label: 'Remarks', key: 'remarks' },
+        ];
+        break;
+      case 'stock':
+      case 'lowstock':
+        rows = reportType === 'lowstock' ? filteredStockRows.filter((item) => item.currentStock < item.minimumStockLevel) : filteredStockRows;
+        headers = [
+          { label: 'Material Name', key: 'name' },
+          { label: 'Category', key: 'category' },
+          { label: 'Current Stock', key: 'currentStock' },
+          { label: 'Minimum Stock Level', key: 'minimumStockLevel' },
+          { label: 'Status', key: 'status' },
+        ];
+        break;
+      case 'productAvailability':
+        rows = filteredProductAvailabilityRows;
+        headers = [
+          { label: 'Product', key: 'name' },
+          { label: 'Available Stock', key: 'currentStock' },
+          { label: 'Status', key: 'status' },
+        ];
+        break;
+      default:
+        setError('Cannot export this report type. Please generate a report first.');
+        return;
+    }
+
+    if (!rows.length) {
+      setError('No data available to export. Generate a report first.');
+      return;
+    }
+
+    downloadCsv(rows, headers, fileName);
   };
 
   const productionRows = useMemo(
