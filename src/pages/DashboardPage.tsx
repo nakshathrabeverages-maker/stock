@@ -86,6 +86,12 @@ export const DashboardPage: React.FC = () => {
     setPresentAmount(totalSales - totalExpenses + capital);
   }, [totalSales, totalExpenses, capital]);
 
+  const formatAmount = (value: number, fractionDigits = 2) =>
+    value.toLocaleString('en-IN', {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    });
+
   if (loading) return <Loading fullScreen message="Loading dashboard..." />;
 
   return (
@@ -105,37 +111,37 @@ export const DashboardPage: React.FC = () => {
         </Card>
 
         <Card title="Total Sales">
-          <div className="text-4xl font-bold text-green-600">₹{totalSales.toFixed(2)}</div>
+          <div className="text-4xl font-bold text-green-600">₹{formatAmount(totalSales)}</div>
           <p className="text-gray-600 text-sm mt-2">All sales value</p>
         </Card>
 
         <Card title="Total Credit">
-          <div className="text-4xl font-bold text-orange-600">₹{totalCredit.toFixed(2)}</div>
+          <div className="text-4xl font-bold text-orange-600">₹{formatAmount(totalCredit)}</div>
           <p className="text-gray-600 text-sm mt-2">Outstanding credit balance</p>
         </Card>
 
         <Card title="This Month Sales">
-          <div className="text-4xl font-bold text-green-600">₹{currentMonthSales.toFixed(2)}</div>
+          <div className="text-4xl font-bold text-green-600">₹{formatAmount(currentMonthSales)}</div>
           <p className="text-gray-600 text-sm mt-2">Sales in current month</p>
         </Card>
 
         <Card title="This Month Expenses">
-          <div className="text-4xl font-bold text-red-600">₹{currentMonthExpenses.toFixed(2)}</div>
+          <div className="text-4xl font-bold text-red-600">₹{formatAmount(currentMonthExpenses)}</div>
           <p className="text-gray-600 text-sm mt-2">Expenses in current month</p>
         </Card>
 
         <Card title="Total Expenses">
-          <div className="text-4xl font-bold text-red-600">₹{totalExpenses.toFixed(2)}</div>
+          <div className="text-4xl font-bold text-red-600">₹{formatAmount(totalExpenses)}</div>
           <p className="text-gray-600 text-sm mt-2">All expense value</p>
         </Card>
 
         <Card title="Capital">
-          <div className="text-4xl font-bold text-blue-600">₹{capital.toFixed(2)}</div>
+          <div className="text-4xl font-bold text-blue-600">₹{formatAmount(capital)}</div>
           <p className="text-gray-600 text-sm mt-2">Configured capital amount</p>
         </Card>
 
         <Card title="Present Amount">
-          <div className="text-4xl font-bold text-indigo-600">₹{presentAmount.toFixed(2)}</div>
+          <div className="text-4xl font-bold text-indigo-600">₹{formatAmount(presentAmount)}</div>
           <p className="text-gray-600 text-sm mt-2">Sales - Expenses + Capital</p>
         </Card>
       </div>
@@ -194,19 +200,19 @@ export const DashboardPage: React.FC = () => {
       <Card title="Quick Stats" subtitle="System overview">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="text-center p-4 bg-blue-50 rounded-lg">
-            <p className="text-2xl font-bold text-green-600">{totalSales > 0 ? '₹' + totalSales.toFixed(0) : '₹0'}</p>
+            <p className="text-2xl font-bold text-green-600">{totalSales > 0 ? '₹' + formatAmount(totalSales, 0) : '₹0'}</p>
             <p className="text-xs text-gray-600 mt-1">Total Sales</p>
           </div>
           <div className="text-center p-4 bg-orange-50 rounded-lg">
-            <p className="text-2xl font-bold text-orange-600">{totalCredit > 0 ? '₹' + totalCredit.toFixed(0) : '₹0'}</p>
+            <p className="text-2xl font-bold text-orange-600">{totalCredit > 0 ? '₹' + formatAmount(totalCredit, 0) : '₹0'}</p>
             <p className="text-xs text-gray-600 mt-1">Total Credit</p>
           </div>
           <div className="text-center p-4 bg-red-50 rounded-lg">
-            <p className="text-2xl font-bold text-red-600">{totalExpenses > 0 ? '₹' + totalExpenses.toFixed(0) : '₹0'}</p>
+            <p className="text-2xl font-bold text-red-600">{totalExpenses > 0 ? '₹' + formatAmount(totalExpenses, 0) : '₹0'}</p>
             <p className="text-xs text-gray-600 mt-1">Total Expenses</p>
           </div>
           <div className="text-center p-4 bg-indigo-50 rounded-lg">
-            <p className="text-2xl font-bold text-indigo-600">{presentAmount !== 0 ? '₹' + presentAmount.toFixed(0) : '₹0'}</p>
+            <p className="text-2xl font-bold text-indigo-600">{presentAmount !== 0 ? '₹' + formatAmount(presentAmount, 0) : '₹0'}</p>
             <p className="text-xs text-gray-600 mt-1">Present Amount</p>
           </div>
         </div>

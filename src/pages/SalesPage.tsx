@@ -8,6 +8,15 @@ import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
 import { SaleEntry, Product, Customer } from '@/types';
 
+interface BulkProductRow {
+  productId: string;
+  quantity: number;
+  pricePerCase: number;
+  paidAmount: number;
+  paymentStatus: 'pending' | 'done';
+  remarks: string;
+}
+
 export const SalesPage: React.FC = () => {
   const [entries, setEntries] = useState<SaleEntry[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -16,7 +25,13 @@ export const SalesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [bulkCustomerId, setBulkCustomerId] = useState('');
+  const [bulkDate, setBulkDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bulkProductRows, setBulkProductRows] = useState<BulkProductRow[]>([
+    { productId: '', quantity: 0, pricePerCase: 0, paidAmount: 0, paymentStatus: 'pending', remarks: '' },
+  ]);
   const [sortKey, setSortKey] = useState<'date' | 'customer' | 'status'>('date');
   const [customerFilter, setCustomerFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
@@ -76,6 +91,78 @@ export const SalesPage: React.FC = () => {
       remarks: '',
     });
     setIsModalOpen(true);
+  };
+
+  const handleAddBulkSales = () => {
+    setBulkCustomerId('');
+    setBulkDate(new Date().toISOString().split('T')[0]);
+    setBulkProductRows([{ productId: '', quantity: 0, pricePerCase: 0, paidAmount: 0, paymentStatus: 'pending', remarks: '' }]);
+    setIsBulkModalOpen(true);
+  };
+
+  const addBulkProductRow = () => {
+    setBulkProductRows([...bulkProductRows, { productId: '', quantity: 0, pricePerCase: 0, paidAmount: 0, paymentStatus: 'pending', remarks: '' }]);
+  };
+
+  const removeBulkProductRow = (index: number) => {
+    setBulkProductRows(bulkProductRows.filter((_, i) => i !== index));
+  };
+
+  const updateBulkProductRow = (index: number, field: keyof BulkProductRow, value: any) => {
+    const updated = [...bulkProductRows];
+    updated[index] = { ...updated[index], [field]: value };
+    setBulkProductRows(updated);
+  };
+
+  const handleBulkSave = async () => {
+    if (!bulkCustomerId) {
+      setError('Please select a customer');
+      return;
+    }
+
+    const validRows = bulkProductRows.filter((row) => row.productId && row.quantity > 0 && row.pricePerCase > 0);
+    if (!validRows.length) {
+      setError('Please add at least one product with valid quantity and price');
+      return;
+    }
+
+    if (!user) {
+      setError('User not authenticated');
+      return;
+    }
+
+    try {
+      const userId = (user as any)?.id || authService.getCurrentUser()?.uid;
+      if (!userId) {
+        setError('User ID not found');
+        return;
+      }
+
+      const saleDate = new Date(bulkDate);
+      for (const row of validRows) {
+        const totalPrice = row.quantity * row.pricePerCase;
+        const remainingAmount = Math.max(totalPrice - row.paidAmount, 0);
+        const payload = {
+          date: saleDate,
+          productId: row.productId,
+          customerId: bulkCustomerId,
+          quantity: row.quantity,
+          pricePerCase: row.pricePerCase,
+          totalPrice: totalPrice,
+          paidAmount: row.paidAmount,
+          remainingAmount: remainingAmount,
+          paymentStatus: remainingAmount <= 0 ? 'done' : row.paymentStatus,
+          remarks: row.remarks,
+        };
+        await salesService.create(payload as any, userId);
+      }
+
+      setIsBulkModalOpen(false);
+      fetchData();
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save sales');
+    }
   };
 
   const handleEdit = (entry: SaleEntry) => {
@@ -214,9 +301,14 @@ export const SalesPage: React.FC = () => {
 
       <div className="mb-6 space-y-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <Button variant="primary" onClick={handleAddNew}>
-            ➕ Add Sale
-          </Button>
+          <div className="flex gap-3">
+            <Button variant="primary" onClick={handleAddNew}>
+              ➕ Add Sale
+            </Button>
+            <Button variant="secondary" onClick={handleAddBulkSales}>
+              ➕ Add Multiple Products
+            </Button>
+          </div>
           <div className="flex items-center gap-3">
             <label className="text-sm font-medium text-gray-700">Sort by:</label>
             <Select
@@ -401,6 +493,145 @@ export const SalesPage: React.FC = () => {
             value={formData.remarks}
             onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        title="Add Multiple Products for Customer"
+        size="lg"
+        footer={
+          <div className="flex gap-4 justify-end">
+            <Button variant="outline" onClick={() => setIsBulkModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleBulkSave}>
+              Save All
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <Select
+            label="Customer"
+            placeholder="Select a customer"
+            options={customerOptions}
+            value={bulkCustomerId}
+            onChange={(e) => setBulkCustomerId(e.target.value)}
+          />
+
+          <Input
+            label="Date"
+            type="date"
+            value={bulkDate}
+            onChange={(e) => setBulkDate(e.target.value)}
+          />
+
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-700">Products</h3>
+              <Button variant="secondary" size="sm" onClick={addBulkProductRow}>
+                ➕ Add Row
+              </Button>
+            </div>
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {bulkProductRows.map((row, index) => {
+                const totalPrice = row.quantity * row.pricePerCase;
+                const remainingAmount = Math.max(totalPrice - row.paidAmount, 0);
+                return (
+                  <div key={index} className="p-3 bg-gray-50 rounded border border-gray-200">
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1 block font-medium">Product</label>
+                        <select
+                          className="w-full px-2 py-2 border border-gray-300 rounded text-sm"
+                          value={row.productId}
+                          onChange={(e) => updateBulkProductRow(index, 'productId', e.target.value)}
+                        >
+                          <option value="">Select product</option>
+                          {products.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1 block font-medium">Quantity</label>
+                        <input
+                          type="number"
+                          className="w-full px-2 py-2 border border-gray-300 rounded text-sm"
+                          value={row.quantity}
+                          onChange={(e) => updateBulkProductRow(index, 'quantity', parseInt(e.target.value) || 0)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1 block font-medium">Price per Case</label>
+                        <input
+                          type="number"
+                          className="w-full px-2 py-2 border border-gray-300 rounded text-sm"
+                          value={row.pricePerCase}
+                          onChange={(e) => updateBulkProductRow(index, 'pricePerCase', parseFloat(e.target.value) || 0)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1 block font-medium">Total Price</label>
+                        <div className="px-2 py-2 text-sm font-semibold text-gray-700 bg-white rounded border border-gray-200">
+                          ₹{totalPrice.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1 block font-medium">Paid Amount</label>
+                        <input
+                          type="number"
+                          className="w-full px-2 py-2 border border-gray-300 rounded text-sm"
+                          value={row.paidAmount}
+                          onChange={(e) => updateBulkProductRow(index, 'paidAmount', parseFloat(e.target.value) || 0)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1 block font-medium">Remaining Amount</label>
+                        <div className="px-2 py-2 text-sm font-semibold text-gray-700 bg-white rounded border border-gray-200">
+                          ₹{remainingAmount.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1 block font-medium">Payment Status</label>
+                        <select
+                          className="w-full px-2 py-2 border border-gray-300 rounded text-sm"
+                          value={row.paymentStatus}
+                          onChange={(e) => updateBulkProductRow(index, 'paymentStatus', e.target.value as any)}
+                        >
+                          <option value="pending">Pending</option>
+                          <option value="done">Done</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1 block font-medium">Remarks</label>
+                        <input
+                          type="text"
+                          placeholder="Optional"
+                          className="w-full px-2 py-2 border border-gray-300 rounded text-sm"
+                          value={row.remarks}
+                          onChange={(e) => updateBulkProductRow(index, 'remarks', e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => removeBulkProductRow(index)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </Modal>
     </Layout>
