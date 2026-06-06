@@ -102,6 +102,10 @@ export interface PurchaseEntry {
   quantity: number;
   supplier?: string;
   price: number;
+  paidAmount: number;
+  remainingAmount: number;
+  paymentStatus: 'pending' | 'done';
+  category?: string;
   date: Date;
   remarks?: string;
   createdBy: string;
@@ -112,7 +116,7 @@ export interface PurchaseEntry {
 export interface ExpenseEntry {
   id: string;
   date: Date;
-  type: 'rawmaterial' | 'salary' | 'powerbill' | 'plant_maintenance' | 'machine_maintenance' | 'transport' | 'machine_spares' | 'capital_expenditure';
+  type: 'rawmaterial' | 'salary' | 'powerbill' | 'plant_maintenance' | 'machine_maintenance' | 'transport' | 'machine_spares' | 'capital_expenditure' | 'sales_commission';
   subtype?: string;
   vendor?: string;
   value: number;

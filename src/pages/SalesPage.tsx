@@ -152,7 +152,7 @@ export const SalesPage: React.FC = () => {
           totalPrice: totalPrice,
           paidAmount: row.paidAmount,
           remainingAmount: remainingAmount,
-          paymentStatus: remainingAmount <= 0 ? 'done' : row.paymentStatus,
+          paymentStatus: remainingAmount <= 0 ? 'done' : 'pending',
           remarks: row.remarks,
         };
         await salesService.create(payload as any, userId);
@@ -495,12 +495,10 @@ export const SalesPage: React.FC = () => {
             readOnly
           />
 
-          <Select
-            label="Payment Status"
-            options={[{ value: 'pending', label: 'Pending' }, { value: 'done', label: 'Done' }]}
-            value={formData.paymentStatus}
-            onChange={(e) => setFormData({ ...formData, paymentStatus: e.target.value as any })}
-          />
+          <div className="bg-gray-50 p-3 rounded border border-gray-200">
+            <p className="text-sm text-gray-600">Payment Status</p>
+            <p className="text-lg font-semibold text-gray-800">{formData.paymentStatus === 'done' ? 'Done' : 'Pending'}</p>
+          </div>
 
           <Input
             label="Remarks (Optional)"
@@ -613,14 +611,9 @@ export const SalesPage: React.FC = () => {
                       </div>
                       <div>
                         <label className="text-xs text-gray-600 mb-1 block font-medium">Payment Status</label>
-                        <select
-                          className="w-full px-2 py-2 border border-gray-300 rounded text-sm"
-                          value={row.paymentStatus}
-                          onChange={(e) => updateBulkProductRow(index, 'paymentStatus', e.target.value as any)}
-                        >
-                          <option value="pending">Pending</option>
-                          <option value="done">Done</option>
-                        </select>
+                        <div className="px-2 py-2 text-sm font-semibold text-gray-700 bg-white rounded border border-gray-200">
+                          {remainingAmount <= 0 ? 'Done' : 'Pending'}
+                        </div>
                       </div>
                       <div>
                         <label className="text-xs text-gray-600 mb-1 block font-medium">Remarks</label>

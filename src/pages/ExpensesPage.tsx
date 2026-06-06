@@ -13,6 +13,7 @@ const EXPENSE_TYPES = [
   { value: 'transport', label: 'Transport' },
   { value: 'machine_spares', label: 'Machine Spares' },
   { value: 'capital_expenditure', label: 'Capital Expenditure' },
+  { value: 'sales_commission', label: 'Sales Commission' },
 ];
 
 export const ExpensesPage: React.FC = () => {
@@ -81,6 +82,20 @@ export const ExpensesPage: React.FC = () => {
     }
   };
 
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this expense?')) return;
+    try {
+      setLoading(true);
+      await expenseService.delete(id);
+      await fetchExpenses();
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete expense');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Layout title="Expenses" subtitle="Track company expenses">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
@@ -103,6 +118,7 @@ export const ExpensesPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Value</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Created By</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Remarks</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -112,9 +128,17 @@ export const ExpensesPage: React.FC = () => {
                   <td className="px-6 py-4 text-sm text-gray-800">{e.type}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.subtype || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.vendor || '-'}</td>
-                  <td className="px-6 py-4 text-sm text-gray-800">{e.value}</td>
+                  <td className="px-6 py-4 text-sm text-gray-800">₹{e.value?.toFixed(2) || '0.00'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{userMap[e.createdBy] || e.createdBy || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.remarks || '-'}</td>
+                  <td className="px-6 py-4 text-sm space-x-2">
+                    <Button variant="secondary" size="sm" onClick={() => handleEdit(e)}>
+                      Edit
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => handleDelete(e.id)}>
+                      Delete
+                    </Button>
+                  </td>
                 </tr>
               ))}
             </tbody>

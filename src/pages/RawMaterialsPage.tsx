@@ -4,16 +4,7 @@ import { rawMaterialService } from '@/services/rawMaterialService';
 import { userService } from '@/services/userService';
 import { authService } from '@/services/authService';
 import { RawMaterial, RawMaterialCategory } from '@/types';
-
-const CATEGORIES: Array<{ value: RawMaterialCategory; label: string }> = [
-  { value: 'Preforms', label: 'Preforms' },
-  { value: 'Caps', label: 'Caps' },
-  { value: 'Stickers', label: 'Stickers' },
-  { value: 'Shrink Rolls', label: 'Shrink Rolls' },
-  { value: 'Minerals', label: 'Minerals' },
-  { value: 'Filters', label: 'Filters' },
-  { value: 'Ink Materials', label: 'Ink Materials' },
-];
+import { RAW_MATERIAL_CATEGORIES } from '@/constants/rawMaterial';
 
 export const RawMaterialsPage: React.FC = () => {
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
@@ -217,7 +208,7 @@ export const RawMaterialsPage: React.FC = () => {
 
           <Select
             label="Category"
-            options={CATEGORIES}
+            options={RAW_MATERIAL_CATEGORIES}
             value={formData.category}
             onChange={(e) => setFormData({ ...formData, category: e.target.value as RawMaterialCategory })}
           />

@@ -11,6 +11,7 @@ import { Product, RawMaterial } from '@/types';
 
 export const DashboardPage: React.FC = () => {
   const [thisMonthProduction, setThisMonthProduction] = useState<number>(0);
+  const [thisMonthSalesCases, setThisMonthSalesCases] = useState<number>(0);
   const [lowStockItems, setLowStockItems] = useState<RawMaterial[]>([]);
   const [totalProducts, setTotalProducts] = useState<number>(0);
   const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
@@ -61,6 +62,12 @@ export const DashboardPage: React.FC = () => {
             ? sum + (item.totalPrice ?? 0)
             : sum;
         }, 0);
+        const cmSalesCases = sales.reduce((sum, item) => {
+          const d = new Date(item.date as any);
+          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+            ? sum + (item.quantity ?? 0)
+            : sum;
+        }, 0);
         const cmExpenses = expenses.reduce((sum, item) => {
           const d = new Date(item.date as any);
           return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
@@ -72,6 +79,7 @@ export const DashboardPage: React.FC = () => {
         setTotalCredit(totalCreditVal);
         setTotalExpenses(totalExpensesVal);
         setCurrentMonthSales(cmSales);
+        setThisMonthSalesCases(cmSalesCases);
         setCurrentMonthExpenses(cmExpenses);
         setCapital(capitalValue);
         setCapitalInput(capitalValue.toString());
@@ -106,6 +114,11 @@ export const DashboardPage: React.FC = () => {
         <Card title="This Month Production">
           <div className="text-4xl font-bold text-primary">{thisMonthProduction}</div>
           <p className="text-gray-600 text-sm mt-2">Cases Produced (this month)</p>
+        </Card>
+
+        <Card title="This Month Sales Cases">
+          <div className="text-4xl font-bold text-green-600">{thisMonthSalesCases}</div>
+          <p className="text-gray-600 text-sm mt-2">Cases Sold (this month)</p>
         </Card>
 
         <Card title="Low Stock Items">

@@ -74,7 +74,7 @@ export const salesService = {
       const total = data.totalPrice ?? (data.quantity * data.pricePerCase);
       const paid = data.paidAmount ?? 0;
       const remaining = Math.max(total - paid, 0);
-      const paymentStatus = remaining <= 0 ? 'done' : (data.paymentStatus || 'pending');
+      const paymentStatus = remaining <= 0 ? 'done' : 'pending';
 
       const now = Timestamp.now();
       const docRef = await addDoc(collection(db, COLLECTION), {
@@ -156,7 +156,7 @@ export const salesService = {
         const remaining = Math.max(total - paid, 0);
         updateData.paidAmount = paid;
         updateData.remainingAmount = remaining;
-        updateData.paymentStatus = remaining <= 0 ? 'done' : (data.paymentStatus || existing.paymentStatus || 'pending');
+        updateData.paymentStatus = remaining <= 0 ? 'done' : 'pending';
       }
 
       await updateDoc(doc(db, COLLECTION, id), updateData);

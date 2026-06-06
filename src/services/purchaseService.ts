@@ -52,9 +52,17 @@ export const purchaseService = {
 
       const now = Timestamp.now();
 
+      const price = data.price ?? 0;
+      const quantity = data.quantity ?? 0;
+      const paidAmount = data.paidAmount ?? 0;
+      const remainingAmount = Math.max(price * quantity - paidAmount, 0);
+      const paymentStatus = remainingAmount <= 0 ? 'done' : 'pending';
+
       const docRef = await addDoc(collection(db, COLLECTION), {
         ...data,
-        price: data.price ?? 0,
+        price,
+        remainingAmount,
+        paymentStatus,
         date: Timestamp.fromDate(data.date),
         createdBy: userId,
         createdAt: now,
@@ -65,9 +73,9 @@ export const purchaseService = {
       const newStock = (material.currentStock || 0) + data.quantity;
       await rawMaterialService.updateStock(material.id, newStock);
 
-      // Create expense entry for this purchase (value = price * quantity)
+      // Create expense entry for this purchase (value = paid amount)
       try {
-        const expenseValue = (data.price ?? 0) * data.quantity;
+        const expenseValue = data.paidAmount ?? 0;
         await expenseService.create({
           date: data.date,
           type: 'rawmaterial',
@@ -116,12 +124,39 @@ export const purchaseService = {
       }
 
       const now = Timestamp.now();
+      const price = data.price ?? existingPurchase.price ?? 0;
+      const quantity = data.quantity ?? existingPurchase.quantity ?? 0;
+      const paidAmount = data.paidAmount ?? existingPurchase.paidAmount ?? 0;
+      const remainingAmount = Math.max(price * quantity - paidAmount, 0);
+      const paymentStatus = remainingAmount <= 0 ? 'done' : 'pending';
+
       await updateDoc(purchaseRef, {
         ...data,
-        price: data.price ?? 0,
+        price,
+        remainingAmount,
+        paymentStatus,
         date: Timestamp.fromDate(data.date),
         updatedAt: now,
       });
+
+      // Update linked expense with new paid amount
+      try {
+        const expensesQuery = query(
+          collection(db, 'expenses'),
+          where('remarks', '==', `Purchase ${id}`)
+        );
+        const expensesSnapshot = await getDocs(expensesQuery);
+        if (!expensesSnapshot.empty) {
+          const expenseDoc = expensesSnapshot.docs[0];
+          await updateDoc(expenseDoc.ref, {
+            value: data.paidAmount ?? 0,
+            updatedAt: now,
+          });
+        }
+      } catch (err) {
+        // non-fatal: log but don't fail the purchase update
+        console.warn('Failed to update expense for purchase:', err);
+      }
 
       return { success: true };
     } catch (error) {
@@ -143,6 +178,23 @@ export const purchaseService = {
       const material = await rawMaterialService.getById(materialId);
       await rawMaterialService.updateStock(material.id, Math.max((material.currentStock || 0) - quantity, 0));
       await deleteDoc(purchaseRef);
+
+      // Delete linked expense
+      try {
+        const expensesQuery = query(
+          collection(db, 'expenses'),
+          where('remarks', '==', `Purchase ${id}`)
+        );
+        const expensesSnapshot = await getDocs(expensesQuery);
+        if (!expensesSnapshot.empty) {
+          const expenseDoc = expensesSnapshot.docs[0];
+          await deleteDoc(expenseDoc.ref);
+        }
+      } catch (err) {
+        // non-fatal: log but don't fail the purchase deletion
+        console.warn('Failed to delete linked expense:', err);
+      }
+
       return { success: true };
     } catch (error) {
       throw new Error(`Failed to delete purchase: ${error instanceof Error ? error.message : 'Unknown error'}`);
