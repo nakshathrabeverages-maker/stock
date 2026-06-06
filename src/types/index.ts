@@ -114,6 +114,7 @@ export interface ExpenseEntry {
   date: Date;
   type: 'rawmaterial' | 'salary' | 'powerbill' | 'plant_maintenance' | 'machine_maintenance' | 'transport' | 'machine_spares' | 'capital_expenditure';
   subtype?: string;
+  vendor?: string;
   value: number;
   remarks?: string;
   createdBy: string;

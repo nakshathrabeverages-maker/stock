@@ -35,6 +35,7 @@ export const SalesPage: React.FC = () => {
   const [sortKey, setSortKey] = useState<'date' | 'customer' | 'status'>('date');
   const [customerFilter, setCustomerFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
   const { user } = useAuthStore();
@@ -201,12 +202,15 @@ export const SalesPage: React.FC = () => {
 
       const matchesCustomer = customerFilter ? entry.customerId === customerFilter : true;
       const matchesProduct = productFilter ? entry.productId === productFilter : true;
+      const matchesStatus = statusFilter
+        ? (entry.paymentStatus ?? '').toLowerCase() === statusFilter.toLowerCase()
+        : true;
       const matchesStartDate = startDate ? entryDate >= startDate : true;
       const matchesEndDate = endDate ? entryDate <= endDate : true;
 
-      return matchesCustomer && matchesProduct && matchesStartDate && matchesEndDate;
+      return matchesCustomer && matchesProduct && matchesStatus && matchesStartDate && matchesEndDate;
     });
-  }, [entries, customers, products, customerFilter, productFilter, startDateFilter, endDateFilter]);
+  }, [entries, customers, products, customerFilter, productFilter, statusFilter, startDateFilter, endDateFilter]);
 
   const sortedEntries = useMemo(() => {
     return [...filteredEntries].sort((a, b) => {
@@ -324,7 +328,7 @@ export const SalesPage: React.FC = () => {
         </div>
 
         <Card className="p-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
             <Select
               label="Filter by Customer"
               placeholder="All customers"
@@ -338,6 +342,17 @@ export const SalesPage: React.FC = () => {
               options={[{ value: '', label: 'All products' }, ...productOptions]}
               value={productFilter}
               onChange={(e) => setProductFilter(e.target.value)}
+            />
+            <Select
+              label="Filter by Status"
+              placeholder="All statuses"
+              options={[
+                { value: '', label: 'All statuses' },
+                { value: 'pending', label: 'Pending' },
+                { value: 'done', label: 'Done' },
+              ]}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
             />
             <Input
               label="Start Date"

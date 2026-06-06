@@ -26,6 +26,7 @@ export const ExpensesPage: React.FC = () => {
     date: new Date(),
     type: 'rawmaterial',
     subtype: '',
+    vendor: '',
     value: 0,
     remarks: '',
   });
@@ -49,13 +50,13 @@ export const ExpensesPage: React.FC = () => {
 
   const handleAddNew = () => {
     setEditingId(null);
-    setFormData({ date: new Date(), type: 'rawmaterial', subtype: '', value: 0, remarks: '' });
+    setFormData({ date: new Date(), type: 'rawmaterial', subtype: '', vendor: '', value: 0, remarks: '' });
     setIsModalOpen(true);
   };
 
   const handleEdit = (entry: ExpenseEntry) => {
     setEditingId(entry.id);
-    setFormData({ date: entry.date, type: entry.type, subtype: entry.subtype || '', value: entry.value, remarks: entry.remarks || '' });
+    setFormData({ date: entry.date, type: entry.type, subtype: entry.subtype || '', vendor: entry.vendor || '', value: entry.value, remarks: entry.remarks || '' });
     setIsModalOpen(true);
   };
 
@@ -98,6 +99,7 @@ export const ExpensesPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Date</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Type</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Subtype</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Vendor</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Value</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Created By</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Remarks</th>
@@ -109,6 +111,7 @@ export const ExpensesPage: React.FC = () => {
                   <td className="px-6 py-4 text-sm text-gray-800">{new Date(e.date).toLocaleDateString()}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.type}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.subtype || '-'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-800">{e.vendor || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.value}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{userMap[e.createdBy] || e.createdBy || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.remarks || '-'}</td>
@@ -155,6 +158,13 @@ export const ExpensesPage: React.FC = () => {
             placeholder="e.g., Material name or payroll month"
             value={formData.subtype}
             onChange={(e) => setFormData({ ...formData, subtype: e.target.value })}
+          />
+
+          <Input
+            label="Vendor (Optional)"
+            placeholder="Vendor / Supplier name"
+            value={(formData as any).vendor}
+            onChange={(e) => setFormData({ ...formData, vendor: e.target.value })}
           />
 
           <Input

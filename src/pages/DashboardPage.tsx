@@ -10,7 +10,7 @@ import { settingsService } from '@/services/settingsService';
 import { Product, RawMaterial } from '@/types';
 
 export const DashboardPage: React.FC = () => {
-  const [todayProduction, setTodayProduction] = useState<number>(0);
+  const [thisMonthProduction, setThisMonthProduction] = useState<number>(0);
   const [lowStockItems, setLowStockItems] = useState<RawMaterial[]>([]);
   const [totalProducts, setTotalProducts] = useState<number>(0);
   const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
@@ -31,18 +31,21 @@ export const DashboardPage: React.FC = () => {
     const fetchDashboardData = async () => {
       try {
         setLoading(true);
-        const [production, lowStock, sales, expenses, capitalValue, products] = await Promise.all([
-          productionService.getTodayProduction(),
+        const [productionEntries, lowStock, sales, expenses, capitalValue, products] = await Promise.all([
+          productionService.getAll({ startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1), endDate: new Date() }),
           rawMaterialService.getLowStockItems(),
           salesService.getAll(),
           expenseService.getAll(),
           settingsService.getValue('capital'),
           productService.getAll(false),
         ]);
-
         const available = products.filter((product) => product.currentStock > 0 && product.status === 'active');
 
-        setTodayProduction(production);
+        const production = Array.isArray(productionEntries)
+          ? productionEntries.reduce((sum: number, entry: any) => sum + (entry.quantity ?? 0), 0)
+          : 0;
+
+        setThisMonthProduction(production);
         setLowStockItems(lowStock);
         setTotalProducts(products.length);
         setAvailableProducts(available);
@@ -100,9 +103,9 @@ export const DashboardPage: React.FC = () => {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-        <Card title="Today's Production">
-          <div className="text-4xl font-bold text-primary">{todayProduction}</div>
-          <p className="text-gray-600 text-sm mt-2">Cases Produced</p>
+        <Card title="This Month Production">
+          <div className="text-4xl font-bold text-primary">{thisMonthProduction}</div>
+          <p className="text-gray-600 text-sm mt-2">Cases Produced (this month)</p>
         </Card>
 
         <Card title="Low Stock Items">
