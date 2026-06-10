@@ -7,6 +7,12 @@ import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
 import { ProductionEntry, Product } from '@/types';
 
+interface BulkProductionRow {
+  productId: string;
+  quantity: number;
+  remarks: string;
+}
+
 export const ProductionPage: React.FC = () => {
   const [entries, setEntries] = useState<ProductionEntry[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -14,6 +20,7 @@ export const ProductionPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const { user } = useAuthStore();
   const [formData, setFormData] = useState<Omit<ProductionEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>>({
@@ -22,6 +29,10 @@ export const ProductionPage: React.FC = () => {
     quantity: 0,
     remarks: '',
   });
+  const [bulkDate, setBulkDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bulkProductRows, setBulkProductRows] = useState<BulkProductionRow[]>([
+    { productId: '', quantity: 0, remarks: '' },
+  ]);
 
   useEffect(() => {
     fetchData();
@@ -54,6 +65,63 @@ export const ProductionPage: React.FC = () => {
       remarks: '',
     });
     setIsModalOpen(true);
+  };
+
+  const addBulkProductRow = () => {
+    setBulkProductRows([...bulkProductRows, { productId: '', quantity: 0, remarks: '' }]);
+  };
+
+  const removeBulkProductRow = (index: number) => {
+    setBulkProductRows(bulkProductRows.filter((_, i) => i !== index));
+  };
+
+  const updateBulkProductRow = (index: number, field: keyof BulkProductionRow, value: string | number) => {
+    const updated = [...bulkProductRows];
+    updated[index] = { ...updated[index], [field]: value };
+    setBulkProductRows(updated);
+  };
+
+  const handleAddBulk = () => {
+    setBulkDate(new Date().toISOString().split('T')[0]);
+    setBulkProductRows([{ productId: '', quantity: 0, remarks: '' }]);
+    setIsBulkModalOpen(true);
+  };
+
+  const handleBulkSave = async () => {
+    if (!user) {
+      setError('User not authenticated');
+      return;
+    }
+
+    const validRows = bulkProductRows.filter((row) => row.productId && row.quantity > 0);
+    if (!validRows.length) {
+      setError('Please add at least one valid product row');
+      return;
+    }
+
+    try {
+      const userId = (user as any)?.id || authService.getCurrentUser()?.uid;
+      if (!userId) {
+        setError('User ID not found');
+        return;
+      }
+
+      const productionDate = new Date(bulkDate);
+      for (const row of validRows) {
+        await productionService.create({
+          date: productionDate,
+          productId: row.productId,
+          quantity: row.quantity,
+          remarks: row.remarks,
+        } as any, userId);
+      }
+
+      setIsBulkModalOpen(false);
+      fetchData();
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save bulk production entries');
+    }
   };
 
   const handleEdit = (entry: ProductionEntry) => {
@@ -124,6 +192,9 @@ export const ProductionPage: React.FC = () => {
       <div className="mb-6 flex gap-4">
         <Button variant="primary" onClick={handleAddNew}>
           ➕ Add Production Entry
+        </Button>
+        <Button variant="secondary" onClick={handleAddBulk}>
+          ➕ Add Multiple Products
         </Button>
       </div>
 
@@ -215,6 +286,75 @@ export const ProductionPage: React.FC = () => {
             value={formData.remarks}
             onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        title="Add Multiple Production Entries"
+        size="lg"
+        footer={
+          <div className="flex gap-4 justify-end">
+            <Button variant="outline" onClick={() => setIsBulkModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleBulkSave}>
+              Save All
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <Input
+            label="Date"
+            type="date"
+            value={bulkDate}
+            onChange={(e) => setBulkDate(e.target.value)}
+          />
+
+          <div className="space-y-4">
+            {bulkProductRows.map((row, index) => (
+              <div key={index} className="p-4 bg-gray-50 rounded border border-gray-200">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div>
+                    <Select
+                      label="Product"
+                      placeholder="Select a product"
+                      options={productOptions}
+                      value={row.productId}
+                      onChange={(e) => updateBulkProductRow(index, 'productId', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Input
+                      label="Quantity"
+                      type="number"
+                      value={row.quantity}
+                      onChange={(e) => updateBulkProductRow(index, 'quantity', parseInt(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div>
+                    <Input
+                      label="Remarks"
+                      placeholder="Optional"
+                      value={row.remarks}
+                      onChange={(e) => updateBulkProductRow(index, 'remarks', e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <Button variant="danger" size="sm" onClick={() => removeBulkProductRow(index)}>
+                    Remove Row
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <Button variant="secondary" onClick={addBulkProductRow}>
+            ➕ Add Another Product Row
+          </Button>
         </div>
       </Modal>
     </Layout>
