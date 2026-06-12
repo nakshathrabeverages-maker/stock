@@ -116,7 +116,7 @@ export interface PurchaseEntry {
 export interface ExpenseEntry {
   id: string;
   date: Date;
-  type: 'rawmaterial' | 'salary' | 'powerbill' | 'plant_maintenance' | 'machine_maintenance' | 'transport' | 'machine_spares' | 'capital_expenditure' | 'sales_commission';
+  type: 'rawmaterial' | 'salary' | 'powerbill' | 'plant_maintenance' | 'machine_maintenance' | 'transport' | 'food' | 'loading_charges' | 'courier_charges' | 'machine_spares' | 'capital_expenditure' | 'sales_commission' | 'others';
   subtype?: string;
   vendor?: string;
   value: number;

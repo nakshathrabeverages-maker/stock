@@ -11,9 +11,13 @@ const EXPENSE_TYPES = [
   { value: 'plant_maintenance', label: 'Plant Maintenance' },
   { value: 'machine_maintenance', label: 'Machine Maintenance' },
   { value: 'transport', label: 'Transport' },
+  { value: 'food', label: 'Food' },
+  { value: 'loading_charges', label: 'Loading Charges' },
+  { value: 'courier_charges', label: 'Courier Charges' },
   { value: 'machine_spares', label: 'Machine Spares' },
   { value: 'capital_expenditure', label: 'Capital Expenditure' },
   { value: 'sales_commission', label: 'Sales Commission' },
+  { value: 'others', label: 'Others' },
 ];
 
 export const ExpensesPage: React.FC = () => {
