@@ -23,6 +23,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileVisible, onMobileClose }
     { label: 'Dashboard', path: '/dashboard', icon: '📊' },
     { label: 'Production', path: '/production', icon: '🏭', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Sales', path: '/sales', icon: '💰', requiredRoles: ['admin', 'co-admin'] },
+    { label: 'Orders', path: '/orders', icon: '🛒', requiredRoles: ['admin', 'co-admin'] },
     { label: 'Customers', path: '/customers', icon: '👤', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Material Usage', path: '/material-usage', icon: '📦', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Raw Materials', path: '/raw-materials', icon: '🔧', requiredRoles: ['admin', 'operator', 'co-admin'] },

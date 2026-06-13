@@ -16,6 +16,7 @@ import {
   PurchasesPage,
   CustomersPage,
   SalesPage,
+  OrdersPage,
   ExpensesPage,
 } from '@/pages';
 
@@ -157,6 +158,15 @@ function App() {
           element={
             <ProtectedRoute requiredRoles={["admin", "co-admin"]}>
               <SalesPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/orders"
+          element={
+            <ProtectedRoute requiredRoles={["admin", "co-admin"]}>
+              <OrdersPage />
             </ProtectedRoute>
           }
         />

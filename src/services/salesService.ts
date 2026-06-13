@@ -64,7 +64,7 @@ export const salesService = {
     }
   },
 
-  async create(data: Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt'>, userId: string) {
+  async create(data: Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>, userId: string) {
     try {
       const product = await productService.getById(data.productId);
       if (product.currentStock < data.quantity) {

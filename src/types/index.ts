@@ -151,6 +151,24 @@ export interface SaleEntry {
   updatedAt: Date;
 }
 
+export interface OrderEntry {
+  id: string;
+  orderDate: Date;
+  deliveryDate?: Date;
+  productId: string;
+  customerId: string;
+  orderedBy: string;
+  quantity: number;
+  pricePerCase: number;
+  totalPrice: number;
+  status: 'order_created' | 'order_accepted' | 'loading_in_progress' | 'vehicle_started' | 'delivered';
+  remarks?: string;
+  convertedToSale?: boolean;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // Types for dashboard
 export interface DashboardData {
   producedToday: number;
