@@ -15,6 +15,9 @@ export const DashboardPage: React.FC = () => {
   const [thisMonthProduction, setThisMonthProduction] = useState<number>(0);
   const [thisMonthSalesCases, setThisMonthSalesCases] = useState<number>(0);
   const [lowStockItems, setLowStockItems] = useState<RawMaterial[]>([]);
+  const [todayOrdersCount, setTodayOrdersCount] = useState<number>(0);
+  const [todayOrdersDeliveredCount, setTodayOrdersDeliveredCount] = useState<number>(0);
+  const [todayOrdersPendingCount, setTodayOrdersPendingCount] = useState<number>(0);
   const [totalProducts, setTotalProducts] = useState<number>(0);
   const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
   const [totalSales, setTotalSales] = useState<number>(0);
@@ -136,12 +139,25 @@ export const DashboardPage: React.FC = () => {
           }
         });
 
-        setTodayOrdersByCustomer(
-          Array.from(grouped.values()).sort((a, b) => {
-            if (b.totalAmount !== a.totalAmount) return b.totalAmount - a.totalAmount;
-            return a.customerName.localeCompare(b.customerName);
-          })
-        );
+        const groupedArray = Array.from(grouped.values()).sort((a, b) => {
+          if (b.totalAmount !== a.totalAmount) return b.totalAmount - a.totalAmount;
+          return a.customerName.localeCompare(b.customerName);
+        });
+
+        // Count distinct customer orders (each customer counts as 1)
+        const distinctCount = grouped.size;
+        // For each customer group, if all their orders are delivered -> delivered, else pending
+        let deliveredGroups = 0;
+        groupedArray.forEach((g) => {
+          const allDelivered = g.orders.every((o) => (o.status as any) === 'delivered');
+          if (allDelivered) deliveredGroups += 1;
+        });
+        const pendingGroups = distinctCount - deliveredGroups;
+
+        setTodayOrdersByCustomer(groupedArray);
+        setTodayOrdersCount(distinctCount);
+        setTodayOrdersDeliveredCount(deliveredGroups);
+        setTodayOrdersPendingCount(pendingGroups);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
       } finally {
@@ -183,6 +199,16 @@ export const DashboardPage: React.FC = () => {
         <Card title="Low Stock Items">
           <div className="text-4xl font-bold text-yellow-600">{lowStockItems.length}</div>
           <p className="text-gray-600 text-sm mt-2">Need Re-ordering</p>
+        </Card>
+
+        <Card title="Today's Orders">
+          <div className="text-4xl font-bold text-gray-800">{todayOrdersCount}</div>
+          <p className="text-gray-600 text-sm mt-2">Distinct customer orders today</p>
+          <div className="mt-2 text-sm">
+            <span className="text-green-700">Delivered: {todayOrdersDeliveredCount}</span>
+            <span className="mx-2">|</span>
+            <span className="text-orange-700">Pending: {todayOrdersPendingCount}</span>
+          </div>
         </Card>
 
         <Card title="Total Sales">
@@ -240,11 +266,27 @@ export const DashboardPage: React.FC = () => {
                   {group.orders.map((order, idx) => {
                     const product = productsMap.find((p) => p.id === order.productId);
                     const orderPrice = order.totalPrice ?? order.quantity * order.pricePerCase;
+                    const statusLabelMap: Record<string, string> = {
+                      order_created: 'Created',
+                      order_accepted: 'Accepted',
+                      loading_in_progress: 'Loading',
+                      vehicle_started: 'En route',
+                      delivered: 'Delivered',
+                    };
+                    const status = order.status || 'order_created';
+                    const statusLabel = statusLabelMap[status] || status;
+                    const statusColorClass = status === 'delivered' ? 'bg-green-100 text-green-800' : status === 'order_accepted' ? 'bg-blue-100 text-blue-800' : status === 'loading_in_progress' || status === 'vehicle_started' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800';
+
                     return (
                       <div key={idx} className="flex items-center justify-between text-sm bg-gray-50 p-2 rounded">
                         <div>
                           <p className="text-gray-800">{product?.name || 'Product'}</p>
                           <p className="text-xs text-gray-600">Qty: {order.quantity} @ ₹{order.pricePerCase.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/case</p>
+                          <div className="mt-1">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusColorClass}`}>
+                              {statusLabel}
+                            </span>
+                          </div>
                         </div>
                         <p className="font-semibold text-gray-900">₹{orderPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                       </div>
