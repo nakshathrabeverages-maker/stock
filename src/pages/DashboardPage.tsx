@@ -172,11 +172,14 @@ export const DashboardPage: React.FC = () => {
     setPresentAmount(totalSales - totalExpenses + capital);
   }, [totalSales, totalExpenses, capital]);
 
-  const formatAmount = (value: number, fractionDigits = 2) =>
-    value.toLocaleString('en-IN', {
-      minimumFractionDigits: fractionDigits,
-      maximumFractionDigits: fractionDigits,
+  const formatAmount = (value: number, fractionDigits?: number) => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return '0';
+    const useFraction = typeof fractionDigits === 'number' ? fractionDigits : (Number.isInteger(value) ? 0 : 2);
+    return value.toLocaleString('en-IN', {
+      minimumFractionDigits: useFraction,
+      maximumFractionDigits: useFraction,
     });
+  };
 
   if (loading) return <Loading fullScreen message="Loading dashboard..." />;
 
@@ -258,8 +261,8 @@ export const DashboardPage: React.FC = () => {
                     <h3 className="font-semibold text-gray-900">{group.customerName}</h3>
                     <p className="text-xs text-gray-600">{group.orderCount} order{group.orderCount > 1 ? 's' : ''}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold text-green-600">₹{group.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <div className="text-right max-w-40">
+                    <p className="text-lg font-bold text-green-600 truncate">₹{formatAmount(group.totalAmount)}</p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -281,14 +284,14 @@ export const DashboardPage: React.FC = () => {
                       <div key={idx} className="flex items-center justify-between text-sm bg-gray-50 p-2 rounded">
                         <div>
                           <p className="text-gray-800">{product?.name || 'Product'}</p>
-                          <p className="text-xs text-gray-600">Qty: {order.quantity} @ ₹{order.pricePerCase.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/case</p>
+                          <p className="text-xs text-gray-600">Qty: {order.quantity} @ ₹{formatAmount(order.pricePerCase)}/case</p>
                           <div className="mt-1">
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusColorClass}`}>
                               {statusLabel}
                             </span>
                           </div>
                         </div>
-                        <p className="font-semibold text-gray-900">₹{orderPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                        <p className="font-semibold text-gray-900 truncate">₹{formatAmount(orderPrice)}</p>
                       </div>
                     );
                   })}
