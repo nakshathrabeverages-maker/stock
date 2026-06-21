@@ -5,6 +5,7 @@ export { ProductsPage } from './ProductsPage';
 export { ProductionPage } from './ProductionPage';
 export { MaterialUsagePage } from './MaterialUsagePage';
 export { ReportsPage } from './ReportsPage';
+export { ReportsAggregationPage } from './ReportsAggregationPage';
 export { UsersPage } from './UsersPage';
 export { PurchasesPage } from './PurchasesPage';
 export { CustomersPage } from './CustomersPage';

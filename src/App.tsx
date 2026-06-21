@@ -12,6 +12,7 @@ import {
   ProductionPage,
   MaterialUsagePage,
   ReportsPage,
+  ReportsAggregationPage,
   UsersPage,
   PurchasesPage,
   CustomersPage,
@@ -122,6 +123,15 @@ function App() {
           element={
             <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
               <ReportsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/reports-aggregation"
+          element={
+            <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
+              <ReportsAggregationPage />
             </ProtectedRoute>
           }
         />
