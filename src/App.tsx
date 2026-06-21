@@ -13,6 +13,7 @@ import {
   MaterialUsagePage,
   ReportsPage,
   ReportsAggregationPage,
+  CreditUpdatePage,
   UsersPage,
   PurchasesPage,
   CustomersPage,
@@ -132,6 +133,15 @@ function App() {
           element={
             <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
               <ReportsAggregationPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/credit-update"
+          element={
+            <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
+              <CreditUpdatePage />
             </ProtectedRoute>
           }
         />
