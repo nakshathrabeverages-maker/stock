@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Layout } from '@/components';
 import { db } from '@/config/firebase';
 import {
   collection as fsCollection,
@@ -374,10 +375,11 @@ export const AnalyticsPage: React.FC = () => {
   };
 
   return (
-    <div className="p-6">
-      <h2 className="text-xl font-semibold mb-4">Analytics — Firebase Data Extractor & Report Generator</h2>
+    <Layout title="Analytics" subtitle="Firebase Data Extractor & Report Generator">
+      <div className="p-6">
+        <h2 className="text-xl font-semibold mb-4">Analytics — Firebase Data Extractor & Report Generator</h2>
 
-      <div className="grid grid-cols-12 gap-4">
+        <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-3">
           <div className="card p-4 rounded shadow-sm">
             <label className="block mb-2">Collection Name</label>
@@ -529,6 +531,7 @@ export const AnalyticsPage: React.FC = () => {
         </div>
       </div>
     </div>
+  </Layout>
   );
 };
 

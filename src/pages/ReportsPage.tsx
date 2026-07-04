@@ -395,16 +395,60 @@ export const ReportsPage: React.FC = () => {
     [purchaseData, materials]
   );
 
-  const salesRows = useMemo(
-    () =>
-      salesData.map((entry) => ({
-        ...entry,
-        productName: products.find((p) => p.id === entry.productId)?.name || 'N/A',
-        customerName: customers.find((c) => c.id === entry.customerId)?.name || 'N/A',
-        dateLabel: new Date(entry.date).toLocaleDateString(),
-      })),
-    [salesData, products, customers]
-  );
+  const salesRows = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        id: string;
+        dateLabel: string;
+        customerName: string;
+        customerId: string;
+        productNames: string;
+        totalQuantity: number;
+        totalPrice: number;
+        paidAmount: number;
+        remainingAmount: number;
+        paymentStatus: 'pending' | 'done';
+        remarks: string;
+      }
+    >();
+
+    salesData.forEach((entry) => {
+      const dateLabel = new Date(entry.date).toLocaleDateString();
+      const customerName = customers.find((c) => c.id === entry.customerId)?.name || 'N/A';
+      const productName = products.find((p) => p.id === entry.productId)?.name || 'N/A';
+      const key = `${entry.customerId}|${dateLabel}`;
+      const existing = grouped.get(key);
+
+      if (existing) {
+        existing.productNames = existing.productNames.includes(productName)
+          ? existing.productNames
+          : `${existing.productNames}, ${productName}`;
+        existing.totalQuantity += entry.quantity;
+        existing.totalPrice += entry.totalPrice ?? 0;
+        existing.paidAmount += entry.paidAmount ?? 0;
+        existing.remainingAmount += entry.remainingAmount ?? 0;
+        existing.paymentStatus = existing.paymentStatus === 'done' && entry.paymentStatus === 'done' ? 'done' : 'pending';
+        if (entry.remarks) existing.remarks = existing.remarks ? `${existing.remarks}; ${entry.remarks}` : entry.remarks;
+      } else {
+        grouped.set(key, {
+          id: key,
+          dateLabel,
+          customerName,
+          customerId: entry.customerId,
+          productNames: productName,
+          totalQuantity: entry.quantity,
+          totalPrice: entry.totalPrice ?? 0,
+          paidAmount: entry.paidAmount ?? 0,
+          remainingAmount: entry.remainingAmount ?? 0,
+          paymentStatus: entry.paymentStatus,
+          remarks: entry.remarks || '',
+        });
+      }
+    });
+
+    return Array.from(grouped.values());
+  }, [salesData, products, customers]);
 
   const filteredProductionRows = useMemo(
     () => applyFilterAndSort(productionRows, ['dateLabel', 'productName', 'quantity', 'remarks']),
@@ -425,7 +469,7 @@ export const ReportsPage: React.FC = () => {
     () =>
       applyFilterAndSort(
         salesRows,
-        ['dateLabel', 'productName', 'customerName', 'paymentStatus', 'remarks']
+        ['dateLabel', 'productNames', 'customerName', 'paymentStatus', 'remarks']
       ),
     [salesRows, reportFilter, reportSortKey, reportSortDirection]
   );
@@ -686,10 +730,9 @@ export const ReportsPage: React.FC = () => {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-2 text-left font-semibold">Date</th>
-                    <th className="px-4 py-2 text-left font-semibold">Product</th>
                     <th className="px-4 py-2 text-left font-semibold">Customer</th>
-                    <th className="px-4 py-2 text-right font-semibold">Qty</th>
-                    <th className="px-4 py-2 text-right font-semibold">Price / Case</th>
+                    <th className="px-4 py-2 text-left font-semibold">Products</th>
+                    <th className="px-4 py-2 text-right font-semibold">Total Qty</th>
                     <th className="px-4 py-2 text-right font-semibold">Total</th>
                     <th className="px-4 py-2 text-right font-semibold">Paid</th>
                     <th className="px-4 py-2 text-right font-semibold">Remaining</th>
@@ -700,10 +743,9 @@ export const ReportsPage: React.FC = () => {
                   {filteredSalesRows.map((entry) => (
                     <tr key={entry.id}>
                       <td className="px-4 py-2">{entry.dateLabel}</td>
-                      <td className="px-4 py-2">{entry.productName}</td>
                       <td className="px-4 py-2">{entry.customerName}</td>
-                      <td className="px-4 py-2 text-right font-semibold">{entry.quantity}</td>
-                      <td className="px-4 py-2 text-right">₹{entry.pricePerCase.toFixed(2)}</td>
+                      <td className="px-4 py-2">{entry.productNames}</td>
+                      <td className="px-4 py-2 text-right font-semibold">{entry.totalQuantity}</td>
                       <td className="px-4 py-2 text-right">₹{entry.totalPrice.toFixed(2)}</td>
                       <td className="px-4 py-2 text-right">₹{entry.paidAmount.toFixed(2)}</td>
                       <td className="px-4 py-2 text-right">₹{entry.remainingAmount.toFixed(2)}</td>
