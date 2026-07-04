@@ -33,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileVisible, onMobileClose }
     { label: 'Reports', path: '/reports', icon: '📄', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Reports Aggregation', path: '/reports-aggregation', icon: '📊', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Credit Update', path: '/credit-update', icon: '✏️', requiredRoles: ['admin', 'operator', 'co-admin'] },
+    { label: 'Analytics', path: '/analytics', icon: '📊', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Users', path: '/users', icon: '👥', requiredRoles: ['admin'] },
   ];
 

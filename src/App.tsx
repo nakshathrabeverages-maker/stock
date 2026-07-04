@@ -20,6 +20,7 @@ import {
   SalesPage,
   OrdersPage,
   ExpensesPage,
+  AnalyticsPage,
 } from '@/pages';
 
 const ProtectedRoute: React.FC<{
@@ -187,6 +188,15 @@ function App() {
           element={
             <ProtectedRoute requiredRoles={["admin", "co-admin"]}>
               <OrdersPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/analytics"
+          element={
+            <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
+              <AnalyticsPage />
             </ProtectedRoute>
           }
         />

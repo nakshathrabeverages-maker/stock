@@ -13,3 +13,4 @@ export { CustomersPage } from './CustomersPage';
 export { SalesPage } from './SalesPage';
 export { OrdersPage } from './OrdersPage';
 export { ExpensesPage } from './ExpensesPage';
+export { AnalyticsPage } from './UpdateQueriesPage';
