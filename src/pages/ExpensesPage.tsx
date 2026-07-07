@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Layout, Card, Button, Input, Select, Modal, Alert, Loading } from '@/components';
 import { expenseService } from '@/services/expenseService';
 import { userService } from '@/services/userService';
@@ -17,6 +17,8 @@ const EXPENSE_TYPES = [
   { value: 'machine_spares', label: 'Machine Spares' },
   { value: 'capital_expenditure', label: 'Capital Expenditure' },
   { value: 'sales_commission', label: 'Sales Commission' },
+  { value: 'rent', label: 'Rent' },
+  { value: 'lemon_soda_purchase', label: 'Lemon Soda Purchase' },
   { value: 'others', label: 'Others' },
 ];
 
@@ -27,6 +29,10 @@ export const ExpensesPage: React.FC = () => {
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [startDateFilter, setStartDateFilter] = useState<string>('');
+  const [endDateFilter, setEndDateFilter] = useState<string>('');
+  const [sortOption, setSortOption] = useState<string>('dateDesc');
   const [formData, setFormData] = useState<Omit<ExpenseEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>>({
     date: new Date(),
     type: 'rawmaterial',
@@ -100,14 +106,100 @@ export const ExpensesPage: React.FC = () => {
     }
   };
 
+  const filteredEntries = useMemo(() => {
+    const startDate = startDateFilter ? new Date(startDateFilter) : null;
+    const endDate = endDateFilter ? new Date(endDateFilter) : null;
+    if (endDate) {
+      endDate.setHours(23, 59, 59, 999);
+    }
+
+    return entries
+      .filter((entry) => {
+        const entryDate = new Date(entry.date);
+        const matchesType = typeFilter === 'all' || entry.type === typeFilter;
+        const matchesStart = startDate ? entryDate >= startDate : true;
+        const matchesEnd = endDate ? entryDate <= endDate : true;
+        return matchesType && matchesStart && matchesEnd;
+      })
+      .sort((a, b) => {
+        const aDate = new Date(a.date).getTime();
+        const bDate = new Date(b.date).getTime();
+        const aValue = a.value ?? 0;
+        const bValue = b.value ?? 0;
+        const aType = a.type.toLowerCase();
+        const bType = b.type.toLowerCase();
+
+        switch (sortOption) {
+          case 'dateAsc':
+            return aDate - bDate;
+          case 'dateDesc':
+            return bDate - aDate;
+          case 'valueAsc':
+            return aValue - bValue;
+          case 'valueDesc':
+            return bValue - aValue;
+          case 'typeAsc':
+            return aType.localeCompare(bType);
+          case 'typeDesc':
+            return bType.localeCompare(aType);
+          default:
+            return bDate - aDate;
+        }
+      });
+  }, [entries, typeFilter, startDateFilter, endDateFilter, sortOption]);
+
   return (
     <Layout title="Expenses" subtitle="Track company expenses">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
 
-      <div className="mb-6 flex gap-4">
-        <Button variant="primary" onClick={handleAddNew}>
-          ➕ Add Expense
-        </Button>
+      <div className="mb-6 flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <Button variant="primary" onClick={handleAddNew}>
+            ➕ Add Expense
+          </Button>
+
+          <div className="flex flex-wrap gap-3">
+            <div className="min-w-[180px]">
+              <Select
+                label="Expense Type"
+                options={[{ value: 'all', label: 'All Types' }, ...EXPENSE_TYPES]}
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+              />
+            </div>
+            <div className="min-w-[180px]">
+              <Input
+                label="Start Date"
+                type="date"
+                value={startDateFilter}
+                onChange={(e) => setStartDateFilter(e.target.value)}
+              />
+            </div>
+            <div className="min-w-[180px]">
+              <Input
+                label="End Date"
+                type="date"
+                value={endDateFilter}
+                onChange={(e) => setEndDateFilter(e.target.value)}
+              />
+            </div>
+            <div className="min-w-[180px]">
+              <Select
+                label="Sort by"
+                options={[
+                  { value: 'dateDesc', label: 'Date Desc' },
+                  { value: 'dateAsc', label: 'Date Asc' },
+                  { value: 'valueDesc', label: 'Value Desc' },
+                  { value: 'valueAsc', label: 'Value Asc' },
+                  { value: 'typeAsc', label: 'Type Asc' },
+                  { value: 'typeDesc', label: 'Type Desc' },
+                ]}
+                value={sortOption}
+                onChange={(e) => setSortOption(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <Card>
@@ -126,7 +218,7 @@ export const ExpensesPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {entries.map((e) => (
+              {filteredEntries.map((e) => (
                 <tr key={e.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 text-sm text-gray-800">{new Date(e.date).toLocaleDateString()}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.type}</td>
