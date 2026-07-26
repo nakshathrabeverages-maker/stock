@@ -10,6 +10,7 @@ import {
   where,
   orderBy,
   Timestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { productService } from '@/services/productService';
@@ -64,10 +65,14 @@ export const salesService = {
     }
   },
 
-  async create(data: Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>, userId: string) {
+  async create(
+    data: Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>,
+    userId: string,
+    options?: { skipStockValidation?: boolean }
+  ) {
     try {
       const product = await productService.getById(data.productId);
-      if (product.currentStock < data.quantity) {
+      if (!options?.skipStockValidation && product.currentStock < data.quantity) {
         throw new Error('Insufficient product stock for this sale');
       }
 
@@ -179,6 +184,45 @@ export const salesService = {
       return { success: true };
     } catch (error) {
       throw new Error(`Failed to delete sale: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  },
+
+  async deleteMany(ids: string[]) {
+    try {
+      if (!ids.length) {
+        return { success: true };
+      }
+
+      const entries = await Promise.all(ids.map((id) => this.getById(id)));
+      const batch = writeBatch(db);
+      const stockIncrements = new Map<string, number>();
+
+      entries.forEach((entry) => {
+        const current = stockIncrements.get(entry.productId) ?? 0;
+        stockIncrements.set(entry.productId, current + entry.quantity);
+      });
+
+      for (const [productId, increment] of stockIncrements.entries()) {
+        const productRef = doc(db, 'products', productId);
+        const productSnapshot = await getDoc(productRef);
+        const productData = productSnapshot.data() as { currentStock?: number } | undefined;
+        const currentStock = productData?.currentStock ?? 0;
+
+        batch.update(productRef, {
+          currentStock: currentStock + increment,
+          updatedAt: Timestamp.now(),
+        });
+      }
+
+      entries.forEach((entry) => {
+        batch.delete(doc(db, COLLECTION, entry.id));
+      });
+
+      await batch.commit();
+
+      return { success: true };
+    } catch (error) {
+      throw new Error(`Failed to delete selected sales: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   },
 };

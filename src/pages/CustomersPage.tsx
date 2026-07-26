@@ -12,6 +12,8 @@ export const CustomersPage: React.FC = () => {
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [formData, setFormData] = useState<Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>>({
     name: '',
     village: '',
@@ -75,6 +77,24 @@ export const CustomersPage: React.FC = () => {
     }
   };
 
+  const handleSearch = () => {
+    setSearchQuery(searchTerm.trim());
+  };
+
+  const handleClearSearch = () => {
+    setSearchTerm('');
+    setSearchQuery('');
+  };
+
+  const filteredCustomers = customers.filter((customer) => {
+    const query = searchQuery.toLowerCase();
+    if (!query) return true;
+
+    return [customer.name, customer.village, customer.firmName, customer.phone, customer.email]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+  });
+
   const handleSave = async () => {
     if (!formData.name || !formData.village || !formData.firmName || !formData.phone) {
       setError('Please fill in all required fields');
@@ -106,44 +126,64 @@ export const CustomersPage: React.FC = () => {
     <Layout title="Customers" subtitle="Manage customer details">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
 
-      <div className="mb-6 flex gap-4">
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end">
+        <div className="flex-1">
+          <Input
+            label="Search customers"
+            placeholder="Search by name, firm, phone or village"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <Button variant="secondary" onClick={handleSearch}>
+          🔎 Search
+        </Button>
+        <Button variant="outline" onClick={handleClearSearch}>
+          Clear
+        </Button>
         <Button variant="primary" onClick={handleAddNew}>
           ➕ Add Customer
         </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {customers.map((customer) => (
-          <Card key={customer.id} title={customer.name}>
-            <div className="space-y-3">
-              <div className="text-sm text-gray-600">
-                <p>
-                  <span className="font-semibold">Village:</span> {customer.village}
-                </p>
-                <p>
-                  <span className="font-semibold">Firm:</span> {customer.firmName}
-                </p>
-                <p>
-                  <span className="font-semibold">Phone:</span> {customer.phone}
-                </p>
-                <p>
-                  <span className="font-semibold">Email:</span> {customer.email || '-'}
-                </p>
-                <p>
-                  <span className="font-semibold">Created By:</span> {userMap[customer.createdBy] || customer.createdBy || 'N/A'}
-                </p>
+        {filteredCustomers.length === 0 ? (
+          <div className="lg:col-span-2 rounded-lg border border-dashed border-gray-300 p-6 text-center text-gray-600">
+            No customers match your search.
+          </div>
+        ) : (
+          filteredCustomers.map((customer) => (
+            <Card key={customer.id} title={customer.name}>
+              <div className="space-y-3">
+                <div className="text-sm text-gray-600">
+                  <p>
+                    <span className="font-semibold">Village:</span> {customer.village}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Firm:</span> {customer.firmName}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Phone:</span> {customer.phone}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Email:</span> {customer.email || '-'}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Created By:</span> {userMap[customer.createdBy] || customer.createdBy || 'N/A'}
+                  </p>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <Button variant="secondary" size="sm" onClick={() => handleEdit(customer)} className="flex-1">
+                    Edit
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => handleDelete(customer.id)}>
+                    Delete
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-2 pt-2">
-                <Button variant="secondary" size="sm" onClick={() => handleEdit(customer)} className="flex-1">
-                  Edit
-                </Button>
-                <Button variant="danger" size="sm" onClick={() => handleDelete(customer.id)}>
-                  Delete
-                </Button>
-              </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          ))
+        )}
       </div>
 
       <Modal

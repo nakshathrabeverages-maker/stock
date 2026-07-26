@@ -1,10 +1,23 @@
-const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '.env'), override: true });
-const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-const admin = require('firebase-admin');
-const { getFallbackReply } = require('./queryHelpers');
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import express from 'express';
+import cors from 'cors';
+import admin from 'firebase-admin';
+import dotenv from 'dotenv';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+dotenv.config({ path: path.resolve(__dirname, '.env'), override: true });
+dotenv.config({ path: path.resolve(__dirname, '.env.local'), override: true });
+
+const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+if (firebaseProjectId) {
+  process.env.GOOGLE_CLOUD_PROJECT = firebaseProjectId;
+  process.env.GCLOUD_PROJECT = firebaseProjectId;
+}
 
 const PORT = process.env.PORT || 8787;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -29,7 +42,7 @@ const serviceAccountPath = path.join(__dirname, 'serviceAccountKey.json');
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount), projectId: firebaseProjectId });
     firebaseInitialized = true;
     console.log('Initialized Firebase Admin from env JSON');
   } catch (err) {
@@ -37,8 +50,8 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   }
 } else if (fs.existsSync(serviceAccountPath)) {
   try {
-    const serviceAccount = require(serviceAccountPath);
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount), projectId: firebaseProjectId });
     firebaseInitialized = true;
     console.log('Initialized Firebase Admin from server/serviceAccountKey.json');
   } catch (err) {
@@ -46,7 +59,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   }
 } else {
   try {
-    admin.initializeApp({ credential: admin.credential.applicationDefault() });
+    admin.initializeApp({ credential: admin.credential.applicationDefault(), projectId: firebaseProjectId });
     firebaseInitialized = true;
     console.log('Initialized Firebase Admin with application default credentials');
   } catch (err) {
@@ -107,6 +120,15 @@ async function getDocumentsForIndexing() {
 
 function tokenize(text) {
   return (text || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+}
+
+function getFallbackReply(query, matches) {
+  if (!matches?.length) {
+    return 'No matching records were found for that query.';
+  }
+
+  const preview = matches.slice(0, 3).map((match) => match.metadata?.id || match.id).join(', ');
+  return `I found related records for your query, including ${preview}.`;
 }
 
 function scoreDocument(doc, queryTokens) {
@@ -451,6 +473,40 @@ app.post('/api/gemini/generate', async (req, res) => {
   } catch (err) {
     console.error('gemini generate error', err.message);
     res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post('/api/products/bulk-stock-update', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ error: 'Firebase Admin is not configured for server writes.' });
+    }
+
+    const { updates } = req.body || {};
+    if (!Array.isArray(updates) || !updates.length) {
+      return res.status(400).json({ error: 'updates array is required' });
+    }
+
+    const batch = db.batch();
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    updates.forEach((item) => {
+      if (!item?.productId || typeof item.stockValue !== 'number' || item.stockValue < 0) {
+        throw new Error('Each update must include a valid productId and non-negative stockValue.');
+      }
+
+      const ref = db.collection('products').doc(item.productId);
+      batch.update(ref, {
+        currentStock: item.stockValue,
+        updatedAt: now,
+      });
+    });
+
+    await batch.commit();
+    return res.json({ ok: true, updated: updates.length });
+  } catch (err) {
+    console.error('bulk stock update error', err.message);
+    return res.status(500).json({ error: err.message || String(err) });
   }
 });
 

@@ -24,9 +24,14 @@ export const SalesPage: React.FC = () => {
   const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [importJsonText, setImportJsonText] = useState('');
+  const [importFileName, setImportFileName] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
   const [bulkCustomerId, setBulkCustomerId] = useState('');
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().split('T')[0]);
   const [bulkProductRows, setBulkProductRows] = useState<BulkProductRow[]>([
@@ -38,6 +43,7 @@ export const SalesPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
+  const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
   const { user } = useAuthStore();
 
   const [formData, setFormData] = useState<Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>>({
@@ -57,6 +63,139 @@ export const SalesPage: React.FC = () => {
     fetchData();
   }, []);
 
+  const parseImportDate = (value: string | Date | undefined) => {
+    if (value instanceof Date) return value;
+    if (!value) return new Date();
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        const [year, month, day] = trimmed.split('-').map(Number);
+        return new Date(year, month - 1, day);
+      }
+
+      const parsed = new Date(trimmed);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+
+    return new Date();
+  };
+
+  const normalizeName = (value: unknown) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+  const resolveProductId = (row: any) => {
+    const explicitId = row.productId || row.product_id;
+    if (explicitId) return explicitId;
+
+    const candidateNames = [
+      row.productName,
+      row.product_name,
+      row.product,
+      row.itemName,
+      row.item,
+      row.name,
+      row.productname,
+      row.itemname,
+      row.productid,
+    ];
+    const productName = candidateNames.find((value) => typeof value === 'string' && value.trim());
+    if (!productName) return '';
+
+    const normalizedProductName = normalizeName(productName);
+    const match = products.find((product) => {
+      const normalizedProduct = normalizeName(product.name);
+      return (
+        normalizedProduct === normalizedProductName ||
+        normalizedProduct.includes(normalizedProductName) ||
+        normalizedProductName.includes(normalizedProduct) ||
+        normalizedProductName.includes(normalizeName(product.name.replace(/\s+/g, '')))
+      );
+    });
+
+    return match?.id || '';
+  };
+
+  const resolveCustomerId = (row: any) => {
+    const explicitId = row.customerId || row.customer_id;
+    if (explicitId) return explicitId;
+
+    const candidateNames = [
+      row.customerName,
+      row.customer_name,
+      row.customer,
+      row.partyName,
+      row.party,
+      row.customername,
+      row.partyname,
+    ];
+    const customerName = candidateNames.find((value) => typeof value === 'string' && value.trim());
+    if (!customerName) return '';
+
+    const normalizedCustomerName = normalizeName(customerName);
+    const match = customers.find((customer) => {
+      const normalizedCustomer = normalizeName(customer.name);
+      return (
+        normalizedCustomer === normalizedCustomerName ||
+        normalizedCustomer.includes(normalizedCustomerName) ||
+        normalizedCustomerName.includes(normalizedCustomer)
+      );
+    });
+
+    return match?.id || '';
+  };
+
+  const buildImportedSalePayload = (row: any, index: number) => {
+    const productId = resolveProductId(row);
+    const customerId = resolveCustomerId(row);
+    const quantity = Number(row.quantity ?? row.qty ?? 0);
+    const pricePerCase = Number(row.pricePerCase ?? row.price_per_case ?? row.price ?? row.rate ?? 0);
+    const paidAmount = Number(row.paidAmount ?? row.paid ?? row.amountPaid ?? row.advanceAmount ?? 0);
+
+    if (!productId) {
+      throw new Error(`Row ${index + 1}: product not found. Use a valid product name or ID.`);
+    }
+
+    if (!customerId) {
+      throw new Error(`Row ${index + 1}: customer not found. Use a valid customer name or ID.`);
+    }
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new Error(`Row ${index + 1}: quantity must be greater than zero.`);
+    }
+
+    if (!Number.isFinite(pricePerCase) || pricePerCase <= 0) {
+      throw new Error(`Row ${index + 1}: price per case must be greater than zero.`);
+    }
+
+    const totalPrice = quantity * pricePerCase;
+    const remainingAmount = Math.max(totalPrice - paidAmount, 0);
+
+    return {
+      date: parseImportDate(row.date ?? row.saleDate ?? row.createdAt),
+      productId,
+      customerId,
+      quantity,
+      pricePerCase,
+      totalPrice,
+      paidAmount,
+      remainingAmount,
+      paymentStatus: remainingAmount <= 0 ? 'done' : 'pending',
+      remarks: row.remarks ?? row.note ?? '',
+    } as Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
+  };
+
+  const applyProductStockDelta = (productId: string, delta: number) => {
+    setProducts((prev) =>
+      prev.map((product) =>
+        product.id === productId
+          ? { ...product, currentStock: Math.max(product.currentStock + delta, 0) }
+          : product
+      )
+    );
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -66,7 +205,9 @@ export const SalesPage: React.FC = () => {
         customerService.getAll(),
         userService.getAll(),
       ]);
-      setEntries(salesData);
+
+      const sortedSales = [...salesData].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setEntries(sortedSales);
       setProducts(productsData);
       setCustomers(customersData);
       setUserMap(Object.fromEntries(users.map((user) => [user.id, user.email || user.name || user.id])));
@@ -99,6 +240,220 @@ export const SalesPage: React.FC = () => {
     setBulkDate(new Date().toISOString().split('T')[0]);
     setBulkProductRows([{ productId: '', quantity: 0, pricePerCase: 0, paidAmount: 0, paymentStatus: 'pending', remarks: '' }]);
     setIsBulkModalOpen(true);
+  };
+
+  const handleOpenImportModal = () => {
+    setImportJsonText('');
+    setImportFileName('');
+    setSuccessMessage('');
+    setError('');
+    setIsImportModalOpen(true);
+  };
+
+  const parseCsvRows = (text: string) => {
+    const rows: string[][] = [];
+    let currentRow: string[] = [];
+    let currentValue = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+
+      if (char === '"') {
+        if (inQuotes && text[index + 1] === '"') {
+          currentValue += '"';
+          index += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        currentRow.push(currentValue);
+        currentValue = '';
+      } else if ((char === '\n' || char === '\r') && !inQuotes) {
+        if (char === '\r' && text[index + 1] === '\n') {
+          index += 1;
+        }
+        currentRow.push(currentValue);
+        if (currentRow.some((cell) => cell.trim())) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentValue = '';
+      } else {
+        currentValue += char;
+      }
+    }
+
+    if (currentValue.length > 0 || currentRow.length > 0) {
+      currentRow.push(currentValue);
+      if (currentRow.some((cell) => cell.trim())) {
+        rows.push(currentRow);
+      }
+    }
+
+    return rows;
+  };
+
+  const parseImportedSalesRecords = (text: string, fileName: string) => {
+    const trimmedText = text.trim();
+    if (!trimmedText) {
+      throw new Error('Please choose a JSON/CSV file or paste JSON/CSV content first.');
+    }
+
+    const lowerFileName = fileName.toLowerCase();
+    if (lowerFileName.endsWith('.json')) {
+      const parsed = JSON.parse(trimmedText);
+      const records = Array.isArray(parsed) ? parsed : parsed?.sales;
+      if (!Array.isArray(records)) {
+        throw new Error('JSON must be an array of sales records or an object with a sales array.');
+      }
+      return records;
+    }
+
+    if (lowerFileName.endsWith('.csv')) {
+      const rows = parseCsvRows(trimmedText);
+      if (rows.length < 2) {
+        throw new Error('CSV must include a header row and at least one data row.');
+      }
+
+      const [headers, ...dataRows] = rows;
+      const normalizedHeaders = headers.map((header) => header.trim().toLowerCase().replace(/[^a-z0-9]+/g, ''));
+
+      return dataRows
+        .filter((row) => row.some((cell) => cell.trim()))
+        .map((row) => {
+          const record: Record<string, string> = {};
+          normalizedHeaders.forEach((header, index) => {
+            record[header] = row[index] ?? '';
+          });
+
+          const pickValue = (...keys: string[]) => {
+            for (const key of keys) {
+              const value = record[key];
+              if (value !== undefined && String(value).trim() !== '') {
+                return String(value).trim();
+              }
+            }
+            return '';
+          };
+
+          return {
+            date: pickValue('date', 'saledate', 'createdat'),
+            customer: pickValue('customer', 'customername', 'customer', 'party', 'partyname'),
+            product: pickValue('product', 'productname', 'item', 'itemname', 'name'),
+            quantity: pickValue('quantity', 'qty', 'qtysold'),
+            pricePerCase: pickValue('pricepercase', 'price', 'rate', 'pricepercase', 'percaseprice'),
+            paidAmount: pickValue('paidamount', 'paid', 'amountpaid', 'advanceamount'),
+            remarks: pickValue('remarks', 'note', 'description'),
+          };
+        });
+    }
+
+    try {
+      const parsed = JSON.parse(trimmedText);
+      const records = Array.isArray(parsed) ? parsed : parsed?.sales;
+      if (Array.isArray(records)) {
+        return records;
+      }
+    } catch {
+      // Fall back to CSV parsing for pasted CSV content.
+    }
+
+    const rows = parseCsvRows(trimmedText);
+    if (rows.length < 2) {
+      throw new Error('Unable to parse the entered content. Use JSON or CSV format.');
+    }
+
+    const [headers, ...dataRows] = rows;
+    const normalizedHeaders = headers.map((header) => header.trim().toLowerCase().replace(/[^a-z0-9]+/g, ''));
+
+    return dataRows
+      .filter((row) => row.some((cell) => cell.trim()))
+      .map((row) => {
+        const record: Record<string, string> = {};
+        normalizedHeaders.forEach((header, index) => {
+          record[header] = row[index] ?? '';
+        });
+
+        const pickValue = (...keys: string[]) => {
+          for (const key of keys) {
+            const value = record[key];
+            if (value !== undefined && String(value).trim() !== '') {
+              return String(value).trim();
+            }
+          }
+          return '';
+        };
+
+        return {
+          date: pickValue('date', 'saledate', 'createdat'),
+          customer: pickValue('customer', 'customername', 'customer', 'party', 'partyname'),
+          product: pickValue('product', 'productname', 'item', 'itemname', 'name'),
+          quantity: pickValue('quantity', 'qty', 'qtysold'),
+          pricePerCase: pickValue('pricepercase', 'price', 'rate', 'percaseprice'),
+          paidAmount: pickValue('paidamount', 'paid', 'amountpaid', 'advanceamount'),
+          remarks: pickValue('remarks', 'note', 'description'),
+        };
+      });
+  };
+
+  const handleImportFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      setImportJsonText(text);
+      setImportFileName(file.name);
+      setError('');
+      setSuccessMessage('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to read JSON file');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handleImportSubmit = async () => {
+    if (!importJsonText.trim()) {
+      setError('Please choose a JSON/CSV file or paste JSON/CSV content first.');
+      return;
+    }
+
+    if (!user) {
+      setError('User not authenticated');
+      return;
+    }
+
+    try {
+      setIsImporting(true);
+      const records = parseImportedSalesRecords(importJsonText, importFileName);
+
+      const userId = (user as any)?.id || authService.getCurrentUser()?.uid;
+      if (!userId) {
+        throw new Error('User ID not found');
+      }
+
+      const payloads = records.map((row, index) => buildImportedSalePayload(row, index));
+      const createdEntries: SaleEntry[] = [];
+      for (const payload of payloads) {
+        const createdEntry = await salesService.create(payload as any, userId, { skipStockValidation: true });
+        createdEntries.push(createdEntry as SaleEntry);
+        applyProductStockDelta(payload.productId, -payload.quantity);
+      }
+
+      setEntries((prev) => [...createdEntries, ...prev]);
+      setIsImportModalOpen(false);
+      setImportJsonText('');
+      setImportFileName('');
+      setSuccessMessage(`Imported ${payloads.length} sales successfully.`);
+      setError('');
+      fetchData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to import sales');
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const addBulkProductRow = () => {
@@ -140,6 +495,7 @@ export const SalesPage: React.FC = () => {
       }
 
       const saleDate = new Date(bulkDate);
+      const createdEntries: SaleEntry[] = [];
       for (const row of validRows) {
         const totalPrice = row.quantity * row.pricePerCase;
         const remainingAmount = Math.max(totalPrice - row.paidAmount, 0);
@@ -155,9 +511,12 @@ export const SalesPage: React.FC = () => {
           paymentStatus: remainingAmount <= 0 ? 'done' : 'pending',
           remarks: row.remarks,
         };
-        await salesService.create(payload as any, userId);
+        const createdEntry = await salesService.create(payload as any, userId);
+        createdEntries.push(createdEntry as SaleEntry);
+        applyProductStockDelta(payload.productId, -payload.quantity);
       }
 
+      setEntries((prev) => [...createdEntries, ...prev]);
       setIsBulkModalOpen(false);
       fetchData();
       setError('');
@@ -188,29 +547,32 @@ export const SalesPage: React.FC = () => {
     [formData.quantity, formData.pricePerCase]
   );
 
+  const toDateOnly = (value: Date | string | undefined) => {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return null;
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const filteredEntries = useMemo(() => {
-    const startDate = startDateFilter ? new Date(startDateFilter) : null;
-    const endDate = endDateFilter ? new Date(endDateFilter) : null;
-    if (endDate) {
-      endDate.setHours(23, 59, 59, 999);
-    }
+    const startDateValue = startDateFilter ? toDateOnly(startDateFilter) : null;
+    const endDateValue = endDateFilter ? toDateOnly(endDateFilter) : null;
 
     return entries.filter((entry) => {
-      const customerName = customers.find((c) => c.id === entry.customerId)?.name || '';
-      const productName = products.find((p) => p.id === entry.productId)?.name || '';
-      const entryDate = new Date(entry.date);
-
+      const entryDateValue = toDateOnly(entry.date);
       const matchesCustomer = customerFilter ? entry.customerId === customerFilter : true;
       const matchesProduct = productFilter ? entry.productId === productFilter : true;
       const matchesStatus = statusFilter
         ? (entry.paymentStatus ?? '').toLowerCase() === statusFilter.toLowerCase()
         : true;
-      const matchesStartDate = startDate ? entryDate >= startDate : true;
-      const matchesEndDate = endDate ? entryDate <= endDate : true;
+      const matchesStartDate = startDateValue ? (entryDateValue ?? '') >= startDateValue : true;
+      const matchesEndDate = endDateValue ? (entryDateValue ?? '') <= endDateValue : true;
 
       return matchesCustomer && matchesProduct && matchesStatus && matchesStartDate && matchesEndDate;
     });
-  }, [entries, customers, products, customerFilter, productFilter, statusFilter, startDateFilter, endDateFilter]);
+  }, [entries, customerFilter, productFilter, statusFilter, startDateFilter, endDateFilter]);
 
   const sortedEntries = useMemo(() => {
     return [...filteredEntries].sort((a, b) => {
@@ -272,7 +634,9 @@ export const SalesPage: React.FC = () => {
       if (editingId) {
         await salesService.update(editingId, payload as any);
       } else {
-        await salesService.create(payload as any, userId);
+        const createdEntry = await salesService.create(payload as any, userId);
+        setEntries((prev) => [createdEntry as SaleEntry, ...prev]);
+        applyProductStockDelta(payload.productId, -payload.quantity);
       }
 
       setIsModalOpen(false);
@@ -286,11 +650,51 @@ export const SalesPage: React.FC = () => {
   const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to delete this sale?')) {
       try {
+        const entryToDelete = await salesService.getById(id);
         await salesService.delete(id);
-        fetchData();
+        applyProductStockDelta(entryToDelete.productId, entryToDelete.quantity);
+        setSelectedEntryIds((prev) => prev.filter((entryId) => entryId !== id));
+        await fetchData();
+        setError('');
+        setSuccessMessage('Sale deleted successfully.');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to delete sale');
       }
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!selectedEntryIds.length) {
+      setError('Please select at least one sale to delete.');
+      return;
+    }
+
+    if (!confirm(`Delete ${selectedEntryIds.length} selected sale(s)?`)) {
+      return;
+    }
+
+    try {
+      const entriesToDelete = await Promise.all(selectedEntryIds.map((id) => salesService.getById(id)));
+      await salesService.deleteMany(selectedEntryIds);
+      entriesToDelete.forEach((entry) => applyProductStockDelta(entry.productId, entry.quantity));
+      setSelectedEntryIds([]);
+      await fetchData();
+      setError('');
+      setSuccessMessage('Selected sales deleted successfully.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete selected sales');
+    }
+  };
+
+  const toggleEntrySelection = (id: string) => {
+    setSelectedEntryIds((prev) => (prev.includes(id) ? prev.filter((entryId) => entryId !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedEntryIds.length === sortedEntries.length) {
+      setSelectedEntryIds([]);
+    } else {
+      setSelectedEntryIds(sortedEntries.map((entry) => entry.id));
     }
   };
 
@@ -302,15 +706,22 @@ export const SalesPage: React.FC = () => {
   return (
     <Layout title="Sales" subtitle="Record sales by customer and product">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
+      {successMessage && <Alert type="success" message={successMessage} onClose={() => setSuccessMessage('')} />}
 
       <div className="mb-6 space-y-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <Button variant="primary" onClick={handleAddNew}>
               ➕ Add Sale
             </Button>
             <Button variant="secondary" onClick={handleAddBulkSales}>
               ➕ Add Multiple Products
+            </Button>
+            <Button variant="outline" onClick={handleOpenImportModal}>
+              ⬆ Upload JSON
+            </Button>
+            <Button variant="danger" onClick={handleBulkDelete} disabled={!selectedEntryIds.length}>
+              🗑 Delete Selected
             </Button>
           </div>
           <div className="flex items-center gap-3">
@@ -375,6 +786,14 @@ export const SalesPage: React.FC = () => {
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-3 py-3 text-left text-sm font-semibold text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={sortedEntries.length > 0 && selectedEntryIds.length === sortedEntries.length}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                </th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Date</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Product</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Customer</th>
@@ -394,6 +813,14 @@ export const SalesPage: React.FC = () => {
                 const customer = customers.find((c) => c.id === entry.customerId);
                 return (
                   <tr key={entry.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedEntryIds.includes(entry.id)}
+                        onChange={() => toggleEntrySelection(entry.id)}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                    </td>
                     <td className="px-6 py-4 text-sm text-gray-800">{new Date(entry.date).toLocaleDateString()}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{product?.name || 'N/A'}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{customer?.name || 'N/A'}</td>
@@ -506,6 +933,72 @@ export const SalesPage: React.FC = () => {
             value={formData.remarks}
             onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        title="Upload Sales JSON"
+        size="lg"
+        footer={
+          <div className="flex gap-4 justify-end">
+            <Button variant="outline" onClick={() => setIsImportModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleImportSubmit} loading={isImporting}>
+              Import Sales
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Upload a JSON or CSV file containing sales records. Product and customer can be provided by name or ID.
+          </p>
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Choose JSON or CSV file</span>
+            <input
+              type="file"
+              accept=".json,application/json,.csv,text/csv"
+              onChange={handleImportFileChange}
+              className="mt-2 block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-opacity-90"
+            />
+          </label>
+
+          {importFileName && <p className="text-sm text-gray-600">Selected file: {importFileName}</p>}
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Or paste JSON/CSV directly</span>
+            <textarea
+              rows={10}
+              value={importJsonText}
+              onChange={(e) => setImportJsonText(e.target.value)}
+              className="mt-2 w-full rounded border border-gray-300 px-3 py-2 font-mono text-sm"
+              placeholder='[{"date":"2026-07-26","customer":"Ravi Kumar","product":"Water Bottle","quantity":10,"pricePerCase":120,"paidAmount":600}]'
+            />
+          </label>
+
+          <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
+            <p className="mb-2 font-semibold text-gray-700">Example format</p>
+            <pre className="whitespace-pre-wrap break-words">{`JSON example:
+[
+  {
+    "date": "2026-07-26",
+    "customer": "Ravi Kumar",
+    "product": "Water Bottle",
+    "quantity": 10,
+    "pricePerCase": 120,
+    "paidAmount": 600,
+    "remarks": "Imported from JSON"
+  }
+]
+
+CSV example:
+date,customer,product,quantity,pricePerCase,paidAmount,remarks
+2026-07-26,Ravi Kumar,Water Bottle,10,120,600,Imported from CSV`}</pre>
+          </div>
         </div>
       </Modal>
 

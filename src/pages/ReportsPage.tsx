@@ -55,6 +55,13 @@ const REPORT_SORT_OPTIONS: Record<string, { value: string; label: string }[]> = 
     { value: 'type', label: 'Type' },
     { value: 'value', label: 'Amount' },
   ],
+  customers: [
+    { value: 'name', label: 'Customer Name' },
+    { value: 'village', label: 'Village' },
+    { value: 'firmName', label: 'Firm Name' },
+    { value: 'phone', label: 'Phone' },
+    { value: 'email', label: 'Email' },
+  ],
   stock: [
     { value: 'name', label: 'Material Name' },
     { value: 'category', label: 'Category' },
@@ -72,6 +79,135 @@ const REPORT_SORT_OPTIONS: Record<string, { value: string; label: string }[]> = 
     { value: 'currentStock', label: 'Available Stock' },
     { value: 'status', label: 'Status' },
   ],
+};
+
+const REPORT_FILTER_COLUMNS: Record<string, { value: string; label: string }[]> = {
+  production: [
+    { value: 'dateLabel', label: 'Date' },
+    { value: 'productName', label: 'Product' },
+    { value: 'remarks', label: 'Remarks' },
+  ],
+  usage: [
+    { value: 'dateLabel', label: 'Date' },
+    { value: 'materialName', label: 'Material' },
+    { value: 'remarks', label: 'Remarks' },
+  ],
+  purchases: [
+    { value: 'dateLabel', label: 'Date' },
+    { value: 'materialName', label: 'Material' },
+    { value: 'supplier', label: 'Supplier' },
+  ],
+  sales: [
+    { value: 'dateLabel', label: 'Date' },
+    { value: 'productNames', label: 'Product' },
+    { value: 'customerName', label: 'Customer' },
+    { value: 'paymentStatus', label: 'Payment Status' },
+  ],
+  credit: [
+    { value: 'customerName', label: 'Customer' },
+  ],
+  expenses: [
+    { value: 'dateLabel', label: 'Date' },
+    { value: 'type', label: 'Type' },
+    { value: 'subtype', label: 'Subtype' },
+  ],
+  customers: [
+    { value: 'name', label: 'Customer Name' },
+    { value: 'village', label: 'Village' },
+    { value: 'firmName', label: 'Firm Name' },
+    { value: 'phone', label: 'Phone' },
+  ],
+  stock: [
+    { value: 'name', label: 'Material Name' },
+    { value: 'category', label: 'Category' },
+    { value: 'status', label: 'Status' },
+  ],
+  lowstock: [
+    { value: 'name', label: 'Material Name' },
+    { value: 'category', label: 'Category' },
+    { value: 'status', label: 'Status' },
+  ],
+  productAvailability: [
+    { value: 'name', label: 'Product' },
+    { value: 'status', label: 'Status' },
+  ],
+};
+
+const MONTH_ABBREVIATIONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const formatDateLabel = (value: string | number | Date | null | undefined): string => {
+  const date = value instanceof Date ? value : new Date(value ?? '');
+  if (Number.isNaN(date.getTime())) return '';
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = MONTH_ABBREVIATIONS[date.getMonth()] || '';
+  return `${day}-${month}-${date.getFullYear()}`;
+};
+
+interface SearchableDropdownProps {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}
+
+const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
+  label,
+  value,
+  options,
+  onChange,
+  placeholder,
+  disabled,
+}) => {
+  const [open, setOpen] = useState(false);
+  const filteredOptions = useMemo(
+    () => options.filter((option) => option.toLowerCase().includes(value.toLowerCase())),
+    [options, value]
+  );
+
+  return (
+    <div
+      className="relative w-full"
+      tabIndex={-1}
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+          setOpen(false);
+        }
+      }}
+    >
+      <Input
+        label={label}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        disabled={disabled}
+      />
+      {open && filteredOptions.length > 0 && (
+        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+          {filteredOptions.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onChange(option);
+                setOpen(false);
+              }}
+              className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 focus:bg-gray-100"
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 };
 
 export const ReportsPage: React.FC = () => {
@@ -93,6 +229,8 @@ export const ReportsPage: React.FC = () => {
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [reportFilter, setReportFilter] = useState('');
+  const [filterColumn, setFilterColumn] = useState<string>('');
+  const [filterValue, setFilterValue] = useState<string>('');
   const [reportSortKey, setReportSortKey] = useState('date');
   const [reportSortDirection, setReportSortDirection] = useState<'asc' | 'desc'>('asc');
   const [revenueSummary, setRevenueSummary] = useState({ totalSales: 0, totalExpenses: 0, netRevenue: 0 });
@@ -138,6 +276,12 @@ export const ReportsPage: React.FC = () => {
 
   const applyFilterAndSort = <T extends Record<string, any>>(items: T[], searchableKeys: string[]) => {
     let result = items;
+
+    if (filterColumn && filterValue.trim()) {
+      const filterText = filterValue.trim().toLowerCase();
+      result = result.filter((item) => String(item[filterColumn] ?? '').toLowerCase().includes(filterText));
+    }
+
     if (reportFilter.trim()) {
       const search = reportFilter.trim().toLowerCase();
       result = result.filter((item) =>
@@ -162,10 +306,13 @@ export const ReportsPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const options = REPORT_SORT_OPTIONS[reportType] || [];
-    setReportSortKey(options[0]?.value || '');
+    const sortOptions = REPORT_SORT_OPTIONS[reportType] || [];
+    setReportSortKey(sortOptions[0]?.value || '');
     setReportSortDirection('asc');
     setReportFilter('');
+    const filterOptions = REPORT_FILTER_COLUMNS[reportType] || [];
+    setFilterColumn(filterOptions[0]?.value || '');
+    setFilterValue('');
   }, [reportType]);
 
   const loadInitialData = async () => {
@@ -325,6 +472,16 @@ export const ReportsPage: React.FC = () => {
           { label: 'Remarks', key: 'remarks' },
         ];
         break;
+      case 'customers':
+        rows = filteredCustomerRows;
+        headers = [
+          { label: 'Customer Name', key: 'name' },
+          { label: 'Village', key: 'village' },
+          { label: 'Firm Name', key: 'firmName' },
+          { label: 'Phone', key: 'phone' },
+          { label: 'Email', key: 'email' },
+        ];
+        break;
       case 'stock':
       case 'lowstock':
         rows = reportType === 'lowstock' ? filteredStockRows.filter((item) => item.currentStock < item.minimumStockLevel) : filteredStockRows;
@@ -362,7 +519,7 @@ export const ReportsPage: React.FC = () => {
       productionData.map((entry) => ({
         ...entry,
         productName: products.find((p) => p.id === entry.productId)?.name || 'N/A',
-        dateLabel: new Date(entry.date).toLocaleDateString(),
+        dateLabel: formatDateLabel(entry.date),
       })),
     [productionData, products]
   );
@@ -375,7 +532,7 @@ export const ReportsPage: React.FC = () => {
           ...entry,
           materialName: material?.name || 'N/A',
           unit: material?.unit || '-',
-          dateLabel: new Date(entry.date).toLocaleDateString(),
+          dateLabel: formatDateLabel(entry.date),
         };
       }),
     [usageData, materials]
@@ -389,10 +546,19 @@ export const ReportsPage: React.FC = () => {
           ...entry,
           materialName: material?.name || 'N/A',
           unit: material?.unit || '-',
-          dateLabel: new Date(entry.date).toLocaleDateString(),
+          dateLabel: formatDateLabel(entry.date),
         };
       }),
     [purchaseData, materials]
+  );
+
+  const expenseRows = useMemo(
+    () =>
+      expenseData.map((entry) => ({
+        ...entry,
+        dateLabel: formatDateLabel(entry.date),
+      })),
+    [expenseData]
   );
 
   const salesRows = useMemo(() => {
@@ -414,7 +580,7 @@ export const ReportsPage: React.FC = () => {
     >();
 
     salesData.forEach((entry) => {
-      const dateLabel = new Date(entry.date).toLocaleDateString();
+      const dateLabel = formatDateLabel(entry.date);
       const customerName = customers.find((c) => c.id === entry.customerId)?.name || 'N/A';
       const productName = products.find((p) => p.id === entry.productId)?.name || 'N/A';
       const key = `${entry.customerId}|${dateLabel}`;
@@ -452,17 +618,17 @@ export const ReportsPage: React.FC = () => {
 
   const filteredProductionRows = useMemo(
     () => applyFilterAndSort(productionRows, ['dateLabel', 'productName', 'quantity', 'remarks']),
-    [productionRows, reportFilter, reportSortKey, reportSortDirection]
+    [productionRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
   const filteredUsageRows = useMemo(
     () => applyFilterAndSort(usageRows, ['dateLabel', 'materialName', 'quantity', 'remarks']),
-    [usageRows, reportFilter, reportSortKey, reportSortDirection]
+    [usageRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
   const filteredPurchaseRows = useMemo(
     () => applyFilterAndSort(purchaseRows, ['dateLabel', 'materialName', 'supplier', 'price']),
-    [purchaseRows, reportFilter, reportSortKey, reportSortDirection]
+    [purchaseRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
   const filteredSalesRows = useMemo(
@@ -471,17 +637,27 @@ export const ReportsPage: React.FC = () => {
         salesRows,
         ['dateLabel', 'productNames', 'customerName', 'paymentStatus', 'remarks']
       ),
-    [salesRows, reportFilter, reportSortKey, reportSortDirection]
+    [salesRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
   const filteredCreditReport = useMemo(
     () => applyFilterAndSort(creditReport, ['customerName', 'totalCredit', 'orders']),
-    [creditReport, reportFilter, reportSortKey, reportSortDirection]
+    [creditReport, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
   const filteredExpenseRows = useMemo(
-    () => applyFilterAndSort(expenseData, ['date', 'type', 'subtype', 'value', 'remarks']),
-    [expenseData, reportFilter, reportSortKey, reportSortDirection]
+    () => applyFilterAndSort(expenseRows, ['dateLabel', 'type', 'subtype', 'value', 'remarks']),
+    [expenseRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
+  );
+
+  const customerRows = useMemo(
+    () => customers.map((customer) => ({ ...customer })),
+    [customers]
+  );
+
+  const filteredCustomerRows = useMemo(
+    () => applyFilterAndSort(customerRows, ['name', 'village', 'firmName', 'phone', 'email']),
+    [customerRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
   const stockRows = useMemo(
@@ -495,7 +671,7 @@ export const ReportsPage: React.FC = () => {
 
   const filteredStockRows = useMemo(
     () => applyFilterAndSort(stockRows, ['name', 'category', 'currentStock', 'minimumStockLevel', 'status']),
-    [stockRows, reportFilter, reportSortKey, reportSortDirection]
+    [stockRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
   const productAvailabilityRows = useMemo(
@@ -507,9 +683,44 @@ export const ReportsPage: React.FC = () => {
     [productAvailabilityData]
   );
 
+  const currentReportRows = useMemo(() => {
+    switch (reportType) {
+      case 'production':
+        return productionRows;
+      case 'usage':
+        return usageRows;
+      case 'purchases':
+        return purchaseRows;
+      case 'sales':
+        return salesRows;
+      case 'credit':
+        return creditReport;
+      case 'expenses':
+        return expenseRows;
+      case 'customers':
+        return customerRows;
+      case 'stock':
+      case 'lowstock':
+        return stockRows;
+      case 'productAvailability':
+        return productAvailabilityRows;
+      default:
+        return [];
+    }
+  }, [reportType, productionRows, usageRows, purchaseRows, salesRows, creditReport, expenseRows, stockRows, productAvailabilityRows]);
+
+  const distinctFilterValues = useMemo(() => {
+    if (!filterColumn) return [];
+    return Array.from(
+      new Set(
+        currentReportRows.map((item) => String(item[filterColumn] ?? '')).filter((value) => value !== '')
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [currentReportRows, filterColumn]);
+
   const filteredProductAvailabilityRows = useMemo(
     () => applyFilterAndSort(productAvailabilityRows, ['name', 'currentStock', 'status']),
-    [productAvailabilityRows, reportFilter, reportSortKey, reportSortDirection]
+    [productAvailabilityRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
   return (
@@ -529,6 +740,7 @@ export const ReportsPage: React.FC = () => {
                 { value: 'sales', label: 'Sales' },
                 { value: 'credit', label: 'Credit Report' },
                 { value: 'expenses', label: 'Expenses' },
+                { value: 'customers', label: 'Customers List' },
                 { value: 'revenue', label: 'Revenue Summary' },
                 { value: 'stock', label: 'Stock Report' },
                 { value: 'lowstock', label: 'Low Stock Alert' },
@@ -538,7 +750,7 @@ export const ReportsPage: React.FC = () => {
               onChange={(e) => setReportType(e.target.value)}
             />
 
-            {reportType !== 'stock' && reportType !== 'lowstock' && reportType !== 'productAvailability' && (
+            {reportType !== 'stock' && reportType !== 'lowstock' && reportType !== 'productAvailability' && reportType !== 'customers' && (
               <>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
@@ -563,13 +775,32 @@ export const ReportsPage: React.FC = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div>
+              <Select
+                label="Filter Column"
+                options={REPORT_FILTER_COLUMNS[reportType] || []}
+                value={filterColumn}
+                onChange={(e) => setFilterColumn(e.target.value)}
+                placeholder="Select column"
+              />
+            </div>
+            <div>
+              <SearchableDropdown
+                label="Filter value"
+                value={filterValue}
+                onChange={setFilterValue}
+                options={distinctFilterValues}
+                placeholder={filterColumn ? 'Type or choose a value' : 'Select a filter column first'}
+                disabled={!filterColumn}
+              />
+            </div>
             <div>
               <Input
-                label="Filter rows"
+                label="Search all"
                 value={reportFilter}
                 onChange={(e) => setReportFilter(e.target.value)}
-                placeholder="Filter by any value"
+                placeholder="Search across all columns"
               />
             </div>
             <div>
@@ -603,6 +834,39 @@ export const ReportsPage: React.FC = () => {
           </div>
         </div>
       </Card>
+
+      {reportType === 'customers' && (
+        <Card title="Customers List">
+          {filteredCustomerRows.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-semibold">Customer Name</th>
+                    <th className="px-4 py-2 text-left font-semibold">Village</th>
+                    <th className="px-4 py-2 text-left font-semibold">Firm Name</th>
+                    <th className="px-4 py-2 text-left font-semibold">Phone</th>
+                    <th className="px-4 py-2 text-left font-semibold">Email</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredCustomerRows.map((customer) => (
+                    <tr key={customer.id}>
+                      <td className="px-4 py-2 font-medium">{customer.name}</td>
+                      <td className="px-4 py-2">{customer.village}</td>
+                      <td className="px-4 py-2">{customer.firmName}</td>
+                      <td className="px-4 py-2">{customer.phone}</td>
+                      <td className="px-4 py-2">{customer.email || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-gray-600">No customer data found.</p>
+          )}
+        </Card>
+      )}
 
       {reportType === 'revenue' && (
         <Card title="Revenue Summary Report" className="mb-6">
@@ -813,7 +1077,7 @@ export const ReportsPage: React.FC = () => {
                 <tbody className="divide-y">
                   {filteredExpenseRows.map((entry) => (
                     <tr key={entry.id}>
-                      <td className="px-4 py-2">{new Date(entry.date).toLocaleDateString()}</td>
+                      <td className="px-4 py-2">{entry.dateLabel}</td>
                       <td className="px-4 py-2 capitalize">{entry.type.replace('_', ' ')}</td>
                       <td className="px-4 py-2">{entry.subtype || '-'}</td>
                       <td className="px-4 py-2 text-right">₹{entry.value.toFixed(2)}</td>

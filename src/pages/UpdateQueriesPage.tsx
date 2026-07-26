@@ -21,6 +21,75 @@ type FieldInfo = { key: string; sample?: any };
 
 type LookupMap = Record<string, string>;
 
+interface SearchableDropdownProps {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}
+
+const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
+  label,
+  value,
+  options,
+  onChange,
+  placeholder,
+  disabled,
+}) => {
+  const [open, setOpen] = useState(false);
+  const filteredOptions = useMemo(
+    () => options.filter((option) => option.toLowerCase().includes(value.toLowerCase())),
+    [options, value]
+  );
+
+  return (
+    <div
+      className="relative w-full"
+      tabIndex={-1}
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+          setOpen(false);
+        }
+      }}
+    >
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        disabled={disabled}
+        className="w-full border p-2 rounded"
+      />
+      {open && filteredOptions.length > 0 && !disabled && (
+        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+          {filteredOptions.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onChange(option);
+                setOpen(false);
+              }}
+              className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const collectionLabelMap: Record<string, string> = {
   customers: 'Customers',
   products: 'Products',
@@ -224,6 +293,23 @@ export const AnalyticsPage: React.FC = () => {
 
   const visibleFields = useMemo(() => fields.filter(f => f.key.toLowerCase().includes(fieldSearch.toLowerCase())), [fields, fieldSearch]);
 
+  const distinctFieldValues = useMemo(() => {
+    const valuesByField: Record<string, string[]> = {};
+    rows.forEach((row) => {
+      Object.keys(row).forEach((key) => {
+        const raw = row[key];
+        if (raw === undefined || raw === null) return;
+        const value = typeof raw === 'string' ? raw : JSON.stringify(raw);
+        if (!valuesByField[key]) valuesByField[key] = [];
+        if (!valuesByField[key].includes(value)) valuesByField[key].push(value);
+      });
+    });
+    Object.keys(valuesByField).forEach((key) => {
+      valuesByField[key].sort((a, b) => a.localeCompare(b));
+    });
+    return valuesByField;
+  }, [rows]);
+
   const toggleField = (key: string) => {
     setSelectedFields(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -410,34 +496,53 @@ export const AnalyticsPage: React.FC = () => {
         <div className="col-span-12 lg:col-span-6">
           <div className="card p-4 rounded shadow-sm mb-4">
             <h3 className="font-semibold mb-2">Filters</h3>
-            {filters.map((f, idx) => (
-              <div key={idx} className="flex gap-2 mb-2">
-                <select value={f.field} onChange={e => { const v = e.target.value; setFilters(prev => prev.map((p,i)=> i===idx?{...p,field:v}:p)); }} className="border p-1">
-                  <option value="" disabled>Select field</option>
-                  {fields.map(ff=> <option key={ff.key} value={ff.key}>{ff.key}</option>)}
-                </select>
-                <select value={f.op} onChange={e => setFilters(prev => prev.map((p,i)=> i===idx?{...p,op:e.target.value}:p))} className="border p-1">
-                  <option value="=">=</option>
-                  <option value="!=">!=</option>
-                  <option value=">">&gt;</option>
-                  <option value="<">&lt;</option>
-                  <option value=">=">&gt;=</option>
-                  <option value="<=">&lt;=</option>
-                  <option value="contains">contains</option>
-                  <option value="startsWith">startsWith</option>
-                  <option value="endsWith">endsWith</option>
-                  <option value="in">in</option>
-                </select>
-                <input value={f.value} onChange={e => setFilters(prev => prev.map((p,i)=> i===idx?{...p,value:e.target.value}:p))} className="border p-1 flex-1" />
-                    {idx > 0 && (
-                  <select value={f.conj} onChange={e => setFilters(prev => prev.map((p,i)=> i===idx?{...p,conj:e.target.value}:p))} className="border p-1">
-                    <option value="AND">AND</option>
-                    <option value="OR">OR</option>
+            {filters.map((f, idx) => {
+              const values = distinctFieldValues[f.field] || [];
+              return (
+                <div key={idx} className="flex gap-2 mb-2">
+                  <select
+                    value={f.field}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setFilters(prev => prev.map((p,i)=> i===idx?{...p,field:v,value:''}:p));
+                    }}
+                    className="border p-1"
+                  >
+                    <option value="" disabled>Select field</option>
+                    {fields.map(ff=> <option key={ff.key} value={ff.key}>{ff.key}</option>)}
                   </select>
-                )}
-                <button onClick={() => setFilters(prev => prev.filter((_,i)=>i!==idx))} className="px-2 py-1 border rounded">Delete</button>
-              </div>
-            ))}
+                  <select value={f.op} onChange={e => setFilters(prev => prev.map((p,i)=> i===idx?{...p,op:e.target.value}:p))} className="border p-1">
+                    <option value="=">=</option>
+                    <option value="!=">!=</option>
+                    <option value=">">&gt;</option>
+                    <option value="<">&lt;</option>
+                    <option value=">=">&gt;=</option>
+                    <option value="<=">&lt;=</option>
+                    <option value="contains">contains</option>
+                    <option value="startsWith">startsWith</option>
+                    <option value="endsWith">endsWith</option>
+                    <option value="in">in</option>
+                  </select>
+                  <div className="flex-1">
+                    <SearchableDropdown
+                      label="Value"
+                      value={f.value}
+                      onChange={val => setFilters(prev => prev.map((p,i)=> i===idx?{...p,value:val}:p))}
+                      options={values}
+                      placeholder={f.field ? 'Type or choose a value' : 'Select a field first'}
+                      disabled={!f.field}
+                    />
+                  </div>
+                  {idx > 0 && (
+                    <select value={f.conj} onChange={e => setFilters(prev => prev.map((p,i)=> i===idx?{...p,conj:e.target.value}:p))} className="border p-1">
+                      <option value="AND">AND</option>
+                      <option value="OR">OR</option>
+                    </select>
+                  )}
+                  <button onClick={() => setFilters(prev => prev.filter((_,i)=>i!==idx))} className="px-2 py-1 border rounded">Delete</button>
+                </div>
+              );
+            })}
             <div className="flex gap-2">
               <button onClick={addFilter} className="px-3 py-2 bg-primary text-white rounded">Add Filter</button>
               <button onClick={clearFilters} className="px-3 py-2 border rounded">Clear Filters</button>
