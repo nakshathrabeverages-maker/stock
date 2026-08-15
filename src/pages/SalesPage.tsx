@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Layout, Card, Button, Input, Select, Modal, Alert, Loading } from '@/components';
+import { downloadCsv } from '@/utils/csvUtils';
 import { salesService } from '@/services/salesService';
 import { productService } from '@/services/productService';
 import { customerService } from '@/services/customerService';
 import { userService } from '@/services/userService';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
+import { usePageLock } from '@/hooks/usePageLock';
 import { SaleEntry, Product, Customer } from '@/types';
+import { parseDateInput, formatDateInputValue, getStartOfDay, getEndOfDay } from '@/utils/dateUtils';
 
 interface BulkProductRow {
   productId: string;
@@ -45,6 +48,7 @@ export const SalesPage: React.FC = () => {
   const [endDateFilter, setEndDateFilter] = useState('');
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
   const { user } = useAuthStore();
+  const { lockDate, isLocked: isPageLocked } = usePageLock('sales');
 
   const [formData, setFormData] = useState<Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>>({
     date: new Date(),
@@ -63,29 +67,46 @@ export const SalesPage: React.FC = () => {
     fetchData();
   }, []);
 
-  const parseImportDate = (value: string | Date | undefined) => {
-    if (value instanceof Date) return value;
-    if (!value) return new Date();
-
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-        const [year, month, day] = trimmed.split('-').map(Number);
-        return new Date(year, month - 1, day);
-      }
-
-      const parsed = new Date(trimmed);
-      if (!Number.isNaN(parsed.getTime())) {
-        return parsed;
-      }
+  const handleExportSales = () => {
+    if (!sortedEntries.length) {
+      setError('No sales data available to export.');
+      return;
     }
 
-    return new Date();
+    const rows = sortedEntries.map((entry) => ({
+      Date: new Date(entry.date).toLocaleDateString(),
+      Product: products.find((p) => p.id === entry.productId)?.name || 'N/A',
+      Customer: customers.find((c) => c.id === entry.customerId)?.name || 'N/A',
+      Quantity: entry.quantity,
+      'Price per Case': entry.pricePerCase.toFixed(2),
+      Total: entry.totalPrice.toFixed(2),
+      'Paid Amount': (entry.paidAmount ?? 0).toFixed(2),
+      'Remaining Amount': (entry.remainingAmount ?? 0).toFixed(2),
+      Status: entry.paymentStatus,
+      'Created By': userMap[entry.createdBy] || entry.createdBy || '-',
+      Remarks: entry.remarks || '',
+    }));
+
+    downloadCsv(rows, [
+      { label: 'Date', key: 'Date' },
+      { label: 'Product', key: 'Product' },
+      { label: 'Customer', key: 'Customer' },
+      { label: 'Quantity', key: 'Quantity' },
+      { label: 'Price per Case', key: 'Price per Case' },
+      { label: 'Total', key: 'Total' },
+      { label: 'Paid Amount', key: 'Paid Amount' },
+      { label: 'Remaining Amount', key: 'Remaining Amount' },
+      { label: 'Status', key: 'Status' },
+      { label: 'Created By', key: 'Created By' },
+      { label: 'Remarks', key: 'Remarks' },
+    ], `sales-${new Date().toISOString().slice(0, 10)}.csv`);
   };
+
+  const parseImportDate = (value: string | Date | undefined) => parseDateInput(value);
 
   const normalizeName = (value: unknown) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
-  const resolveProductId = (row: any) => {
+  const resolveProductId = (row: any, availableProducts: Product[] = products) => {
     const explicitId = row.productId || row.product_id;
     if (explicitId) return explicitId;
 
@@ -104,7 +125,7 @@ export const SalesPage: React.FC = () => {
     if (!productName) return '';
 
     const normalizedProductName = normalizeName(productName);
-    const match = products.find((product) => {
+    const match = availableProducts.find((product) => {
       const normalizedProduct = normalizeName(product.name);
       return (
         normalizedProduct === normalizedProductName ||
@@ -117,7 +138,7 @@ export const SalesPage: React.FC = () => {
     return match?.id || '';
   };
 
-  const resolveCustomerId = (row: any) => {
+  const resolveCustomerId = (row: any, availableCustomers: Customer[] = customers) => {
     const explicitId = row.customerId || row.customer_id;
     if (explicitId) return explicitId;
 
@@ -134,7 +155,7 @@ export const SalesPage: React.FC = () => {
     if (!customerName) return '';
 
     const normalizedCustomerName = normalizeName(customerName);
-    const match = customers.find((customer) => {
+    const match = availableCustomers.find((customer) => {
       const normalizedCustomer = normalizeName(customer.name);
       return (
         normalizedCustomer === normalizedCustomerName ||
@@ -146,9 +167,9 @@ export const SalesPage: React.FC = () => {
     return match?.id || '';
   };
 
-  const buildImportedSalePayload = (row: any, index: number) => {
-    const productId = resolveProductId(row);
-    const customerId = resolveCustomerId(row);
+  const buildImportedSalePayload = (row: any, index: number, availableProducts: Product[] = products, availableCustomers: Customer[] = customers) => {
+    const productId = resolveProductId(row, availableProducts);
+    const customerId = resolveCustomerId(row, availableCustomers);
     const quantity = Number(row.quantity ?? row.qty ?? 0);
     const pricePerCase = Number(row.pricePerCase ?? row.price_per_case ?? row.price ?? row.rate ?? 0);
     const paidAmount = Number(row.paidAmount ?? row.paid ?? row.amountPaid ?? row.advanceAmount ?? 0);
@@ -196,6 +217,24 @@ export const SalesPage: React.FC = () => {
     );
   };
 
+  const validateStockForPayloads = (payloads: Array<{ productId: string; quantity: number }>, availableProducts: Product[]) => {
+    const errors: string[] = [];
+
+    payloads.forEach((payload) => {
+      const product = availableProducts.find((item) => item.id === payload.productId);
+      if (!product) {
+        errors.push(`Product not found for ID ${payload.productId}`);
+        return;
+      }
+
+      if (product.currentStock < payload.quantity) {
+        errors.push(`${product.name}: expected ${payload.quantity}, available ${product.currentStock}`);
+      }
+    });
+
+    return errors;
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -219,6 +258,10 @@ export const SalesPage: React.FC = () => {
   };
 
   const handleAddNew = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(null);
     setFormData({
       date: new Date(),
@@ -236,6 +279,10 @@ export const SalesPage: React.FC = () => {
   };
 
   const handleAddBulkSales = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setBulkCustomerId('');
     setBulkDate(new Date().toISOString().split('T')[0]);
     setBulkProductRows([{ productId: '', quantity: 0, pricePerCase: 0, paidAmount: 0, paymentStatus: 'pending', remarks: '' }]);
@@ -243,6 +290,10 @@ export const SalesPage: React.FC = () => {
   };
 
   const handleOpenImportModal = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setImportJsonText('');
     setImportFileName('');
     setSuccessMessage('');
@@ -434,14 +485,24 @@ export const SalesPage: React.FC = () => {
         throw new Error('User ID not found');
       }
 
-      const payloads = records.map((row, index) => buildImportedSalePayload(row, index));
+      const latestProducts = await productService.getAll();
+      setProducts(latestProducts);
+      const latestCustomers = await customerService.getAll();
+      setCustomers(latestCustomers);
+
+      const payloads = records.map((row, index) => buildImportedSalePayload(row, index, latestProducts, latestCustomers));
+      const stockErrors = validateStockForPayloads(payloads, latestProducts);
+      if (stockErrors.length) {
+        throw new Error(`Insufficient stock for: ${stockErrors.join('; ')}. No sales were imported.`);
+      }
+
       const createdEntries: SaleEntry[] = [];
       for (const payload of payloads) {
         const createdEntry = await salesService.create(payload as any, userId, { skipStockValidation: true });
         createdEntries.push(createdEntry as SaleEntry);
-        applyProductStockDelta(payload.productId, -payload.quantity);
       }
 
+      createdEntries.forEach((entry) => applyProductStockDelta(entry.productId, -entry.quantity));
       setEntries((prev) => [...createdEntries, ...prev]);
       setIsImportModalOpen(false);
       setImportJsonText('');
@@ -494,7 +555,19 @@ export const SalesPage: React.FC = () => {
         return;
       }
 
-      const saleDate = new Date(bulkDate);
+      const saleDate = parseDateInput(bulkDate);
+      const latestProducts = await productService.getAll();
+      setProducts(latestProducts);
+
+      const payloads = validRows.map((row) => ({
+        productId: row.productId,
+        quantity: row.quantity,
+      }));
+      const stockErrors = validateStockForPayloads(payloads, latestProducts);
+      if (stockErrors.length) {
+        throw new Error(`Insufficient stock for: ${stockErrors.join('; ')}. No sales were created.`);
+      }
+
       const createdEntries: SaleEntry[] = [];
       for (const row of validRows) {
         const totalPrice = row.quantity * row.pricePerCase;
@@ -513,9 +586,9 @@ export const SalesPage: React.FC = () => {
         };
         const createdEntry = await salesService.create(payload as any, userId);
         createdEntries.push(createdEntry as SaleEntry);
-        applyProductStockDelta(payload.productId, -payload.quantity);
       }
 
+      createdEntries.forEach((entry) => applyProductStockDelta(entry.productId, -entry.quantity));
       setEntries((prev) => [...createdEntries, ...prev]);
       setIsBulkModalOpen(false);
       fetchData();
@@ -548,7 +621,7 @@ export const SalesPage: React.FC = () => {
   );
 
   const toDateOnly = (value: Date | string | undefined) => {
-    const date = value ? new Date(value) : null;
+    const date = value ? parseDateInput(value) : null;
     if (!date || Number.isNaN(date.getTime())) return null;
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -607,6 +680,10 @@ export const SalesPage: React.FC = () => {
   }, [computedRemaining]);
 
   const handleSave = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (!formData.productId || !formData.customerId || formData.quantity <= 0 || formData.pricePerCase <= 0) {
       setError('Please select a product, customer, and enter valid quantity and price');
       return;
@@ -648,6 +725,10 @@ export const SalesPage: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Deletes are disabled.`);
+      return;
+    }
     if (confirm('Are you sure you want to delete this sale?')) {
       try {
         const entryToDelete = await salesService.getById(id);
@@ -664,6 +745,10 @@ export const SalesPage: React.FC = () => {
   };
 
   const handleBulkDelete = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Deletes are disabled.`);
+      return;
+    }
     if (!selectedEntryIds.length) {
       setError('Please select at least one sale to delete.');
       return;
@@ -707,20 +792,30 @@ export const SalesPage: React.FC = () => {
     <Layout title="Sales" subtitle="Record sales by customer and product">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
       {successMessage && <Alert type="success" message={successMessage} onClose={() => setSuccessMessage('')} />}
+      {isPageLocked && lockDate && (
+        <Alert
+          type="warning"
+          message={`This page is currently frozen for updates/deletes until ${lockDate.toLocaleDateString()}. Only read and export actions are allowed.`}
+          onClose={() => {}}
+        />
+      )}
 
       <div className="mb-6 space-y-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap gap-3">
-            <Button variant="primary" onClick={handleAddNew}>
+            <Button variant="primary" onClick={handleAddNew} disabled={isPageLocked}>
               ➕ Add Sale
             </Button>
-            <Button variant="secondary" onClick={handleAddBulkSales}>
+            <Button variant="secondary" onClick={handleAddBulkSales} disabled={isPageLocked}>
               ➕ Add Multiple Products
             </Button>
-            <Button variant="outline" onClick={handleOpenImportModal}>
+            <Button variant="outline" onClick={handleOpenImportModal} disabled={isPageLocked}>
               ⬆ Upload JSON
             </Button>
-            <Button variant="danger" onClick={handleBulkDelete} disabled={!selectedEntryIds.length}>
+            <Button variant="secondary" onClick={handleExportSales}>
+              ⬇ Export CSV
+            </Button>
+            <Button variant="danger" onClick={handleBulkDelete} disabled={!selectedEntryIds.length || isPageLocked}>
               🗑 Delete Selected
             </Button>
           </div>
@@ -832,10 +927,10 @@ export const SalesPage: React.FC = () => {
                     <td className="px-6 py-4 text-sm text-gray-800">{entry.paymentStatus}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{userMap[entry.createdBy] || entry.createdBy || '-'}</td>
                     <td className="px-6 py-4 text-sm space-x-2">
-                      <Button variant="secondary" size="sm" onClick={() => handleEdit(entry)}>
+                      <Button variant="secondary" size="sm" onClick={() => handleEdit(entry)} disabled={isPageLocked}>
                         Edit
                       </Button>
-                      <Button variant="danger" size="sm" onClick={() => handleDelete(entry.id)}>
+                      <Button variant="danger" size="sm" onClick={() => handleDelete(entry.id)} disabled={isPageLocked}>
                         Delete
                       </Button>
                     </td>
@@ -867,8 +962,8 @@ export const SalesPage: React.FC = () => {
           <Input
             label="Date"
             type="date"
-            value={formData.date instanceof Date ? formData.date.toISOString().split('T')[0] : formData.date}
-            onChange={(e) => setFormData({ ...formData, date: new Date(e.target.value) })}
+            value={formatDateInputValue(formData.date)}
+            onChange={(e) => setFormData({ ...formData, date: parseDateInput(e.target.value) })}
           />
 
           <Select
@@ -971,6 +1066,12 @@ export const SalesPage: React.FC = () => {
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Or paste JSON/CSV directly</span>
+            <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600 mb-2">
+              <p className="font-medium">Sample CSV format</p>
+              <pre className="mt-2 whitespace-pre-wrap">date,customer,product,quantity,pricePerCase,paidAmount,remarks
+2026-07-26,Ravi Kumar,Water Bottle,10,120,600,Imported from CSV
+2026-07-25,Suresh Verma,Soda,5,80,0,Evening batch</pre>
+            </div>
             <textarea
               rows={10}
               value={importJsonText}

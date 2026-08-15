@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Card, Button, Input, Select, Modal, Alert, Loading } from '@/components';
+import { downloadCsv } from '@/utils/csvUtils';
 import { rawMaterialService } from '@/services/rawMaterialService';
 import { userService } from '@/services/userService';
 import { authService } from '@/services/authService';
+import { usePageLock } from '@/hooks/usePageLock';
 import { RawMaterial, RawMaterialCategory } from '@/types';
 import { RAW_MATERIAL_CATEGORIES } from '@/constants/rawMaterial';
 
@@ -27,6 +29,8 @@ export const RawMaterialsPage: React.FC = () => {
     fetchMaterials();
   }, []);
 
+  const { lockDate, isLocked: isPageLocked } = usePageLock('rawMaterials');
+
   const fetchMaterials = async () => {
     try {
       setLoading(true);
@@ -43,7 +47,40 @@ export const RawMaterialsPage: React.FC = () => {
     }
   };
 
+  const handleExportMaterials = () => {
+    if (!materials.length) {
+      setError('No raw material data available to export.');
+      return;
+    }
+
+    const rows = materials.map((material) => ({
+      Name: material.name,
+      Category: material.category,
+      Unit: material.unit,
+      'Current Stock': material.currentStock,
+      'Minimum Stock Level': material.minimumStockLevel,
+      'Date Added': new Date(material.dateAdded).toLocaleDateString(),
+      'Created By': userMap[material.createdBy] || material.createdBy || '-',
+      Status: material.currentStock < material.minimumStockLevel ? 'Low Stock' : 'OK',
+    }));
+
+    downloadCsv(rows, [
+      { label: 'Name', key: 'Name' },
+      { label: 'Category', key: 'Category' },
+      { label: 'Unit', key: 'Unit' },
+      { label: 'Current Stock', key: 'Current Stock' },
+      { label: 'Minimum Stock Level', key: 'Minimum Stock Level' },
+      { label: 'Date Added', key: 'Date Added' },
+      { label: 'Created By', key: 'Created By' },
+      { label: 'Status', key: 'Status' },
+    ], `raw-materials-${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
   const handleAddNew = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(null);
     setFormData({
       name: '',
@@ -58,6 +95,10 @@ export const RawMaterialsPage: React.FC = () => {
   };
 
   const handleEdit = (material: RawMaterial) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(material.id);
     setFormData({
       name: material.name,
@@ -72,6 +113,10 @@ export const RawMaterialsPage: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (!formData.name || !formData.unit) {
       setError('Please fill in all required fields');
       return;
@@ -98,6 +143,10 @@ export const RawMaterialsPage: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Deletes are disabled.`);
+      return;
+    }
     if (confirm('Are you sure you want to delete this material?')) {
       try {
         await rawMaterialService.disable(id);
@@ -115,10 +164,20 @@ export const RawMaterialsPage: React.FC = () => {
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
 
       <div className="mb-6 flex gap-4">
-        <Button variant="primary" onClick={handleAddNew}>
+        <Button variant="primary" onClick={handleAddNew} disabled={isPageLocked}>
           ➕ Add New Material
         </Button>
+        <Button variant="secondary" onClick={handleExportMaterials}>
+          ⬇ Export CSV
+        </Button>
       </div>
+      {isPageLocked && lockDate && (
+        <Alert
+          type="warning"
+          message={`This page is currently frozen for updates/deletes until ${lockDate.toLocaleDateString()}. Only read and export actions are allowed.`}
+          onClose={() => {}}
+        />
+      )}
 
       {/* Materials Table */}
       <Card>
@@ -161,10 +220,10 @@ export const RawMaterialsPage: React.FC = () => {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm space-x-2">
-                    <Button variant="secondary" size="sm" onClick={() => handleEdit(material)}>
+                    <Button variant="secondary" size="sm" onClick={() => handleEdit(material)} disabled={isPageLocked}>
                       Edit
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => handleDelete(material.id)}>
+                    <Button variant="danger" size="sm" onClick={() => handleDelete(material.id)} disabled={isPageLocked}>
                       Delete
                     </Button>
                   </td>

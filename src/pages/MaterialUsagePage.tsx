@@ -15,6 +15,7 @@ import { rawMaterialService } from '@/services/rawMaterialService';
 import { userService } from '@/services/userService';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
+import { usePageLock } from '@/hooks/usePageLock';
 
 import {
   MaterialUsageEntry,
@@ -51,6 +52,8 @@ export const MaterialUsagePage: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  const { lockDate, isLocked: isPageLocked } = usePageLock('materialUsage');
 
   const fetchData = async () => {
     try {
@@ -89,6 +92,10 @@ export const MaterialUsagePage: React.FC = () => {
   );
 
   const handleAddNew = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(null);
 
     setFormData({
@@ -102,6 +109,10 @@ export const MaterialUsagePage: React.FC = () => {
   };
 
   const handleEdit = (entry: MaterialUsageEntry) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(entry.id);
 
     setFormData({
@@ -115,6 +126,10 @@ export const MaterialUsagePage: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (!formData.rawMaterialId || formData.quantity <= 0) {
       setError(
         'Please select a material and enter a valid quantity'
@@ -186,6 +201,10 @@ export const MaterialUsagePage: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Deletes are disabled.`);
+      return;
+    }
     const confirmed = window.confirm(
       'Are you sure you want to delete this entry?'
     );
@@ -242,10 +261,18 @@ export const MaterialUsagePage: React.FC = () => {
         <Button
           variant="primary"
           onClick={handleAddNew}
+          disabled={isPageLocked}
         >
           ➕ Add Usage Entry
         </Button>
       </div>
+      {isPageLocked && lockDate && (
+        <Alert
+          type="warning"
+          message={`This page is currently frozen for updates/deletes until ${lockDate.toLocaleDateString()}. Only read and export actions are allowed.`}
+          onClose={() => {}}
+        />
+      )}
 
       {/* Usage Table */}
       <Card>
@@ -320,6 +347,7 @@ export const MaterialUsagePage: React.FC = () => {
                           onClick={() =>
                             handleEdit(entry)
                           }
+                          disabled={isPageLocked}
                         >
                           Edit
                         </Button>
@@ -330,6 +358,7 @@ export const MaterialUsagePage: React.FC = () => {
                           onClick={() =>
                             handleDelete(entry.id)
                           }
+                          disabled={isPageLocked}
                         >
                           Delete
                         </Button>

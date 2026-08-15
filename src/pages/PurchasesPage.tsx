@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Layout, Card, Button, Select, Input, Modal, Alert, Loading } from '@/components';
+import { downloadCsv } from '@/utils/csvUtils';
 import { purchaseService } from '@/services/purchaseService';
 import { rawMaterialService } from '@/services/rawMaterialService';
 import { userService } from '@/services/userService';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
+import { usePageLock } from '@/hooks/usePageLock';
 import { PurchaseEntry, RawMaterial, RawMaterialCategory } from '@/types';
 import { RAW_MATERIAL_CATEGORIES } from '@/constants/rawMaterial';
 
@@ -18,6 +20,7 @@ export const PurchasesPage: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const { user } = useAuthStore();
 
+  const { lockDate, isLocked: isPageLocked } = usePageLock('purchases');
   const [formData, setFormData] = useState<Omit<PurchaseEntry, 'id' | 'createdAt' | 'updatedAt'>>({
     rawMaterialId: '',
     quantity: 0,
@@ -54,13 +57,61 @@ export const PurchasesPage: React.FC = () => {
     }
   };
 
+  const handleExportPurchases = () => {
+    if (!purchases.length) {
+      setError('No purchase data available to export.');
+      return;
+    }
+
+    const rows = purchases.map((purchase) => {
+      const material = materials.find((m) => m.id === purchase.rawMaterialId);
+      return {
+        Date: new Date(purchase.date).toLocaleDateString(),
+        Material: material?.name || 'N/A',
+        Category: material?.category || purchase.category || '',
+        Quantity: purchase.quantity,
+        Price: purchase.price.toFixed(2),
+        Total: (purchase.price * purchase.quantity).toFixed(2),
+        'Paid Amount': purchase.paidAmount.toFixed(2),
+        'Remaining Amount': purchase.remainingAmount.toFixed(2),
+        Status: purchase.paymentStatus,
+        Supplier: purchase.supplier || '',
+        Remarks: purchase.remarks || '',
+        'Created By': userMap[purchase.createdBy] || purchase.createdBy || '-',
+      };
+    });
+
+    downloadCsv(rows, [
+      { label: 'Date', key: 'Date' },
+      { label: 'Material', key: 'Material' },
+      { label: 'Category', key: 'Category' },
+      { label: 'Quantity', key: 'Quantity' },
+      { label: 'Price', key: 'Price' },
+      { label: 'Total', key: 'Total' },
+      { label: 'Paid Amount', key: 'Paid Amount' },
+      { label: 'Remaining Amount', key: 'Remaining Amount' },
+      { label: 'Status', key: 'Status' },
+      { label: 'Supplier', key: 'Supplier' },
+      { label: 'Remarks', key: 'Remarks' },
+      { label: 'Created By', key: 'Created By' },
+    ], `purchases-${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
   const handleAddNew = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(null);
     setFormData({ rawMaterialId: '', quantity: 0, supplier: '', price: 0, paidAmount: 0, remainingAmount: 0, paymentStatus: 'pending', category: '', date: new Date(), remarks: '', createdBy: '' } as any);
     setIsModalOpen(true);
   };
 
   const handleEdit = (purchase: PurchaseEntry) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     const selectedMaterial = materials.find((m) => m.id === purchase.rawMaterialId);
     setEditingId(purchase.id);
     setFormData({
@@ -80,6 +131,10 @@ export const PurchasesPage: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Deletes are disabled.`);
+      return;
+    }
     if (!window.confirm('Delete this purchase and adjust stock?')) return;
     try {
       setLoading(true);
@@ -94,6 +149,10 @@ export const PurchasesPage: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (!formData.rawMaterialId || formData.quantity <= 0) {
       setError('Select material and enter positive quantity');
       return;
@@ -133,8 +192,16 @@ export const PurchasesPage: React.FC = () => {
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
 
       <div className="mb-6 flex gap-4">
-        <Button variant="primary" onClick={handleAddNew}>➕ Add Purchase</Button>
+        <Button variant="primary" onClick={handleAddNew} disabled={isPageLocked}>➕ Add Purchase</Button>
+        <Button variant="secondary" onClick={handleExportPurchases}>⬇ Export CSV</Button>
       </div>
+      {isPageLocked && lockDate && (
+        <Alert
+          type="warning"
+          message={`This page is currently frozen for updates/deletes until ${lockDate.toLocaleDateString()}. Only read and export actions are allowed.`}
+          onClose={() => {}}
+        />
+      )}
 
       <Card>
         <div className="overflow-x-auto">
@@ -177,10 +244,10 @@ export const PurchasesPage: React.FC = () => {
                     <td className="px-6 py-4 text-sm text-gray-800">{p.supplier || '-'}</td>
                     <td className="px-6 py-4 text-sm text-gray-800">{userMap[p.createdBy] || p.createdBy || '-'}</td>
                     <td className="px-6 py-4 text-sm space-x-2">
-                      <Button variant="secondary" size="sm" onClick={() => handleEdit(p)}>
+                      <Button variant="secondary" size="sm" onClick={() => handleEdit(p)} disabled={isPageLocked}>
                         Edit
                       </Button>
-                      <Button variant="danger" size="sm" onClick={() => handleDelete(p.id)}>
+                      <Button variant="danger" size="sm" onClick={() => handleDelete(p.id)} disabled={isPageLocked}>
                         Delete
                       </Button>
                     </td>
@@ -231,25 +298,32 @@ export const PurchasesPage: React.FC = () => {
           <Input label="Quantity" type="number" value={formData.quantity} onChange={(e) => {
             const newQuantity = parseFloat(e.target.value) || 0;
             const totalPrice = formData.price * newQuantity;
-            const newRemaining = totalPrice - formData.paidAmount;
-            const newStatus = newRemaining <= 0 ? 'done' : 'pending';
-            setFormData({ ...formData, quantity: newQuantity, remainingAmount: newRemaining, paymentStatus: newStatus } as any);
-          }} />
+              const rawRemaining = totalPrice - formData.paidAmount;
+              const newRemaining = Math.max(Math.round(rawRemaining * 100) / 100, 0);
+              const statusRemaining = newRemaining < 10 ? 0 : newRemaining;
+              const newStatus = statusRemaining === 0 ? 'done' : 'pending';
+              setFormData({ ...formData, quantity: newQuantity, remainingAmount: statusRemaining, paymentStatus: newStatus } as any);
+            }} />
 
-          <Input label="Price" type="number" step="0.01" value={formData.price} onChange={(e) => {
-            const newPrice = parseFloat(e.target.value) || 0;
-            const totalPrice = newPrice * formData.quantity;
-            const newRemaining = totalPrice - formData.paidAmount;
-            setFormData({ ...formData, price: newPrice, remainingAmount: newRemaining } as any);
-          }} />
+            <Input label="Price" type="number" step="0.01" value={formData.price} onChange={(e) => {
+              const newPrice = parseFloat(e.target.value) || 0;
+              const totalPrice = newPrice * formData.quantity;
+              const rawRemaining = totalPrice - formData.paidAmount;
+              const newRemaining = Math.max(Math.round(rawRemaining * 100) / 100, 0);
+              const statusRemaining = newRemaining < 10 ? 0 : newRemaining;
+              const newStatus = statusRemaining === 0 ? 'done' : 'pending';
+              setFormData({ ...formData, price: newPrice, remainingAmount: statusRemaining, paymentStatus: newStatus } as any);
+            }} />
 
-          <Input label="Paid Amount" type="number" step="0.01" value={formData.paidAmount} onChange={(e) => {
-            const newPaidAmount = parseFloat(e.target.value) || 0;
-            const totalPrice = formData.price * formData.quantity;
-            const newRemaining = totalPrice - newPaidAmount;
-            const newStatus = newRemaining <= 0 ? 'done' : 'pending';
-            setFormData({ ...formData, paidAmount: newPaidAmount, remainingAmount: newRemaining, paymentStatus: newStatus } as any);
-          }} />
+            <Input label="Paid Amount" type="number" step="0.01" value={formData.paidAmount} onChange={(e) => {
+              const newPaidAmount = parseFloat(e.target.value) || 0;
+              const totalPrice = formData.price * formData.quantity;
+              const rawRemaining = totalPrice - newPaidAmount;
+              const newRemaining = Math.max(Math.round(rawRemaining * 100) / 100, 0);
+              const statusRemaining = newRemaining < 10 ? 0 : newRemaining;
+              const newStatus = statusRemaining === 0 ? 'done' : 'pending';
+              setFormData({ ...formData, paidAmount: newPaidAmount, remainingAmount: statusRemaining, paymentStatus: newStatus } as any);
+            }} />
 
           <div className="bg-blue-50 p-4 rounded border border-blue-200">
             <div className="grid grid-cols-2 gap-4 text-sm">

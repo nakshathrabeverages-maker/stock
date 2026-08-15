@@ -55,8 +55,10 @@ export const purchaseService = {
       const price = data.price ?? 0;
       const quantity = data.quantity ?? 0;
       const paidAmount = data.paidAmount ?? 0;
-      const remainingAmount = Math.max(price * quantity - paidAmount, 0);
-      const paymentStatus = remainingAmount <= 0 ? 'done' : 'pending';
+      const rawRemaining = price * quantity - paidAmount;
+      const roundedRemaining = Math.max(Math.round(rawRemaining * 100) / 100, 0);
+      const remainingAmount = roundedRemaining < 10 ? 0 : roundedRemaining;
+      const paymentStatus = remainingAmount === 0 ? 'done' : 'pending';
 
       const docRef = await addDoc(collection(db, COLLECTION), {
         ...data,
@@ -127,8 +129,10 @@ export const purchaseService = {
       const price = data.price ?? existingPurchase.price ?? 0;
       const quantity = data.quantity ?? existingPurchase.quantity ?? 0;
       const paidAmount = data.paidAmount ?? existingPurchase.paidAmount ?? 0;
-      const remainingAmount = Math.max(price * quantity - paidAmount, 0);
-      const paymentStatus = remainingAmount <= 0 ? 'done' : 'pending';
+      const rawRemaining = price * quantity - paidAmount;
+      const roundedRemaining = Math.max(Math.round(rawRemaining * 100) / 100, 0);
+      const remainingAmount = roundedRemaining < 10 ? 0 : roundedRemaining;
+      const paymentStatus = remainingAmount === 0 ? 'done' : 'pending';
 
       await updateDoc(purchaseRef, {
         ...data,

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
+import { authService } from '@/services/authService';
 
 interface NavItem {
   label: string;
@@ -16,8 +17,9 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ mobileVisible, onMobileClose }) => {
   const [isOpen, setIsOpen] = useState(true);
-  const { user } = useAuthStore();
+  const { user, clearAuth } = useAuthStore();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const navItems: NavItem[] = [
     { label: 'Dashboard', path: '/dashboard', icon: '📊' },
@@ -32,6 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileVisible, onMobileClose }
     { label: 'Products', path: '/products', icon: '📦', requiredRoles: ['admin', 'co-admin'] },
     { label: 'Reports', path: '/reports', icon: '📄', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Reports Aggregation', path: '/reports-aggregation', icon: '📊', requiredRoles: ['admin', 'operator', 'co-admin'] },
+    { label: 'Page Control', path: '/page-control', icon: '🔒', requiredRoles: ['admin'] },
     { label: 'Credit Update', path: '/credit-update', icon: '✏️', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Analytics', path: '/analytics', icon: '📊', requiredRoles: ['admin', 'operator', 'co-admin'] },
     { label: 'Insights', path: '/insights', icon: '✨', requiredRoles: ['admin', 'operator', 'co-admin'] },
@@ -41,6 +44,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileVisible, onMobileClose }
   const filteredItems = navItems.filter(
     item => !item.requiredRoles || item.requiredRoles.includes(user?.role || 'viewer')
   );
+
+  const handleLogout = async () => {
+    try {
+      await authService.logout();
+      clearAuth();
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
 
   return (
     <>
@@ -109,13 +122,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileVisible, onMobileClose }
 
         {/* Footer */}
         <div className="border-t border-opacity-20 border-white p-4">
-          <Link
-            to="/login"
-            className="block text-center py-2 px-3 bg-opacity-20 bg-white rounded hover:bg-opacity-30 transition text-sm"
+          <button
+            onClick={handleLogout}
+            className="block w-full text-center py-2 px-3 bg-opacity-20 bg-white rounded hover:bg-opacity-30 transition text-sm"
             title={!isOpen ? 'Logout' : ''}
           >
             {isOpen ? 'Logout' : '🚪'}
-          </Link>
+          </button>
         </div>
       </div>
     </>

@@ -15,10 +15,22 @@ import {
 import { db } from '@/config/firebase';
 import { productService } from '@/services/productService';
 import { SaleEntry } from '@/types';
+import { parseDateInput } from '@/utils/dateUtils';
 
 const COLLECTION = 'sales_entries';
+const salesChangeListeners = new Set<() => void>();
+
+const notifySalesChanged = () => {
+  salesChangeListeners.forEach((listener) => listener());
+};
 
 export const salesService = {
+  subscribeToSalesChanges(listener: () => void) {
+    salesChangeListeners.add(listener);
+    return () => {
+      salesChangeListeners.delete(listener);
+    };
+  },
   async getAll(filters?: { startDate?: Date; endDate?: Date }) {
     try {
       const constraints: any[] = [];
@@ -81,6 +93,7 @@ export const salesService = {
       const remaining = Math.max(total - paid, 0);
       const paymentStatus = remaining <= 0 ? 'done' : 'pending';
 
+      const normalizedDate = parseDateInput(data.date);
       const now = Timestamp.now();
       const docRef = await addDoc(collection(db, COLLECTION), {
         ...data,
@@ -88,7 +101,7 @@ export const salesService = {
         paidAmount: paid,
         remainingAmount: remaining,
         paymentStatus,
-        date: Timestamp.fromDate(data.date),
+        date: Timestamp.fromDate(normalizedDate),
         createdBy: userId,
         createdAt: now,
         updatedAt: now,
@@ -97,6 +110,8 @@ export const salesService = {
       await productService.update(data.productId, {
         currentStock: Math.max(product.currentStock - data.quantity, 0),
       });
+
+      notifySalesChanged();
 
       return {
         ...data,
@@ -165,6 +180,7 @@ export const salesService = {
       }
 
       await updateDoc(doc(db, COLLECTION, id), updateData);
+      notifySalesChanged();
       return { success: true };
     } catch (error) {
       throw new Error(`Failed to update sale: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -181,6 +197,7 @@ export const salesService = {
       });
 
       await deleteDoc(doc(db, COLLECTION, id));
+      notifySalesChanged();
       return { success: true };
     } catch (error) {
       throw new Error(`Failed to delete sale: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -219,6 +236,7 @@ export const salesService = {
       });
 
       await batch.commit();
+      notifySalesChanged();
 
       return { success: true };
     } catch (error) {

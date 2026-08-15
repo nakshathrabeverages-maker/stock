@@ -15,3 +15,4 @@ export { OrdersPage } from './OrdersPage';
 export { ExpensesPage } from './ExpensesPage';
 export { AnalyticsPage } from './UpdateQueriesPage';
 export { InsightsPage } from './InsightsPage';
+export { PageControlPage } from './PageControlPage';

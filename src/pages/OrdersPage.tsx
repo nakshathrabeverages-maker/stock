@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Layout, Card, Button, Input, Select, Modal, Alert, Loading } from '@/components';
+import { downloadCsv } from '@/utils/csvUtils';
 import { orderService } from '@/services/orderService';
 import { productService } from '@/services/productService';
 import { customerService } from '@/services/customerService';
 import { userService } from '@/services/userService';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
+import { usePageLock } from '@/hooks/usePageLock';
 import { OrderEntry, Product, Customer } from '@/types';
 
 interface BulkProductRow {
@@ -37,6 +39,7 @@ export const OrdersPage: React.FC = () => {
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
   const { user } = useAuthStore();
+  const { lockDate, isLocked: isPageLocked } = usePageLock('orders');
 
   const [formData, setFormData] = useState<Omit<OrderEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'convertedToSale'>>({
     orderDate: new Date(),
@@ -76,6 +79,10 @@ export const OrdersPage: React.FC = () => {
   };
 
   const handleAddNew = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(null);
     setFormData({
       orderDate: new Date(),
@@ -93,10 +100,47 @@ export const OrdersPage: React.FC = () => {
   };
 
   const handleAddBulkOrders = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setBulkCustomerId('');
     setBulkDate(new Date().toISOString().split('T')[0]);
     setBulkProductRows([{ productId: '', quantity: 0, pricePerCase: 0, remarks: '' }]);
     setIsBulkModalOpen(true);
+  };
+
+  const handleExportOrders = () => {
+    if (!sortedEntries.length) {
+      setError('No order data available to export.');
+      return;
+    }
+
+    const rows = sortedEntries.map((entry) => ({
+      'Order Date': new Date(entry.orderDate).toLocaleDateString(),
+      'Delivery Date': entry.deliveryDate ? new Date(entry.deliveryDate).toLocaleDateString() : '',
+      Product: products.find((p) => p.id === entry.productId)?.name || 'N/A',
+      Customer: customers.find((c) => c.id === entry.customerId)?.name || 'N/A',
+      Quantity: entry.quantity,
+      'Price per Case': entry.pricePerCase.toFixed(2),
+      'Total Price': entry.totalPrice.toFixed(2),
+      Status: entry.status,
+      Remarks: entry.remarks || '',
+      'Created By': userMap[entry.orderedBy] || entry.orderedBy || '-',
+    }));
+
+    downloadCsv(rows, [
+      { label: 'Order Date', key: 'Order Date' },
+      { label: 'Delivery Date', key: 'Delivery Date' },
+      { label: 'Product', key: 'Product' },
+      { label: 'Customer', key: 'Customer' },
+      { label: 'Quantity', key: 'Quantity' },
+      { label: 'Price per Case', key: 'Price per Case' },
+      { label: 'Total Price', key: 'Total Price' },
+      { label: 'Status', key: 'Status' },
+      { label: 'Remarks', key: 'Remarks' },
+      { label: 'Created By', key: 'Created By' },
+    ], `orders-${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
   const addBulkProductRow = () => {
@@ -114,6 +158,10 @@ export const OrdersPage: React.FC = () => {
   };
 
   const handleBulkSave = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (!bulkCustomerId) {
       setError('Please select a customer');
       return;
@@ -165,6 +213,10 @@ export const OrdersPage: React.FC = () => {
   };
 
   const handleEdit = (entry: OrderEntry) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(entry.id);
     setFormData({
       orderDate: entry.orderDate,
@@ -251,6 +303,10 @@ export const OrdersPage: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (!formData.productId || !formData.customerId || formData.quantity <= 0 || formData.pricePerCase <= 0) {
       setError('Please select a product, customer, and enter valid quantity and price');
       return;
@@ -293,6 +349,10 @@ export const OrdersPage: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Deletes are disabled.`);
+      return;
+    }
     if (confirm('Are you sure you want to delete this order?')) {
       try {
         await orderService.delete(id);
@@ -314,14 +374,24 @@ export const OrdersPage: React.FC = () => {
 
       <div className="mb-6 space-y-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex gap-3">
-            <Button variant="primary" onClick={handleAddNew}>
+          <div className="flex gap-3 flex-wrap">
+            <Button variant="primary" onClick={handleAddNew} disabled={isPageLocked}>
               ➕ Add Order
             </Button>
-            <Button variant="secondary" onClick={handleAddBulkOrders}>
+            <Button variant="secondary" onClick={handleAddBulkOrders} disabled={isPageLocked}>
               ➕ Add Multiple Orders
             </Button>
+            <Button variant="secondary" onClick={handleExportOrders}>
+              ⬇ Export CSV
+            </Button>
           </div>
+          {isPageLocked && lockDate && (
+            <Alert
+              type="warning"
+              message={`This page is currently frozen for updates/deletes until ${lockDate.toLocaleDateString()}. Only read and export actions are allowed.`}
+              onClose={() => {}}
+            />
+          )}
           <div className="flex items-center gap-3">
             <label className="text-sm font-medium text-gray-700">Sort by:</label>
             <Select

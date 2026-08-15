@@ -4,6 +4,7 @@ import { productService } from '@/services/productService';
 import { salesService } from '@/services/salesService';
 import { customerService } from '@/services/customerService';
 import { Product, SaleEntry, Customer } from '@/types';
+import { getStartOfDay, getEndOfDay } from '@/utils/dateUtils';
 
 const REPORT_SUBTYPE_OPTIONS = [
   { value: 'customerByAmount', label: 'Sales by Customer - Amount' },
@@ -108,38 +109,50 @@ export const ReportsAggregationPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportSubtype, startDate, endDate]);
 
+  useEffect(() => {
+    const unsubscribe = salesService.subscribeToSalesChanges(() => {
+      generateReport();
+    });
+
+    return unsubscribe;
+  }, []);
+
   const generateReport = async () => {
     try {
       setLoading(true);
       setError('');
 
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
+      const start = getStartOfDay(startDate);
+      const end = getEndOfDay(endDate);
 
-      const sales = await salesService.getAll({ startDate: start, endDate: end });
-      const grouped = new Map<
-        string,
-        {
-          displayName: string;
-          quantity: number;
-          totalAmount: number;
-          creditAmount: number;
-          orders: number;
-          orderKeys: Set<string>;
-        }
-      >();
+      const [sales, latestCustomers, latestProducts] = await Promise.all([
+        salesService.getAll({ startDate: start, endDate: end }),
+        customerService.getAll(),
+        productService.getAll(true),
+      ]);
+
+      setCustomers(latestCustomers);
+      setProducts(latestProducts);
+
+      const grouped = new Map<string, any>();
 
       sales.forEach((entry) => {
-        const orderDateKey = new Date(entry.date as any).toISOString().slice(0, 10);
-        const orderKey = `${entry.customerId}|${orderDateKey}`;
+        const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date as any);
+        const orderDateKey = `${entryDate.getFullYear()}-${String(entryDate.getMonth() + 1).padStart(2, '0')}-${String(entryDate.getDate()).padStart(2, '0')}`;
+        const orderKey = `${entry.customerId || 'unknown'}|${orderDateKey}`;
+        const customer = latestCustomers.find((c) => c.id === entry.customerId);
+        const product = latestProducts.find((p) => p.id === entry.productId);
+        const customerName = customer?.name || 'Unknown Customer';
+        const productName = product?.name || 'Unknown Product';
+        const quantity = Number(entry.quantity ?? 0);
+        const totalAmount = Number(entry.totalPrice ?? 0);
+        const creditAmount = Number(entry.remainingAmount ?? 0);
 
-        if (reportSubtype === 'customerByAmount' || reportSubtype === 'customerByCases') {
-          const customer = customers.find((c) => c.id === entry.customerId);
-          const customerName = customer?.name || 'Unknown Customer';
-          const key = entry.customerId || customerName;
+        if (reportSubtype === 'orderByCustomerDate') {
+          const key = `${entry.customerId || customerName}|${orderDateKey}`;
           const current = grouped.get(key) || {
-            displayName: customerName,
+            customerName,
+            saleDate: orderDateKey,
             quantity: 0,
             totalAmount: 0,
             creditAmount: 0,
@@ -147,17 +160,18 @@ export const ReportsAggregationPage: React.FC = () => {
             orderKeys: new Set<string>(),
           };
 
-          current.quantity += Number(entry.quantity ?? 0);
-          current.totalAmount += Number(entry.totalPrice ?? 0);
-          current.creditAmount += Number(entry.remainingAmount ?? 0);
+          current.quantity += quantity;
+          current.totalAmount += totalAmount;
+          current.creditAmount += creditAmount;
           if (!current.orderKeys.has(orderKey)) {
             current.orderKeys.add(orderKey);
             current.orders += 1;
           }
           grouped.set(key, current);
-        } else {
-          const product = products.find((p) => p.id === entry.productId);
-          const productName = product?.name || 'Unknown Product';
+          return;
+        }
+
+        if (reportSubtype === 'productByCount' || reportSubtype === 'productByValue') {
           const key = entry.productId || productName;
           const current = grouped.get(key) || {
             displayName: productName,
@@ -168,39 +182,72 @@ export const ReportsAggregationPage: React.FC = () => {
             orderKeys: new Set<string>(),
           };
 
-          current.quantity += Number(entry.quantity ?? 0);
-          current.totalAmount += Number(entry.totalPrice ?? 0);
-          current.creditAmount += Number(entry.remainingAmount ?? 0);
+          current.quantity += quantity;
+          current.totalAmount += totalAmount;
+          current.creditAmount += creditAmount;
           if (!current.orderKeys.has(orderKey)) {
             current.orderKeys.add(orderKey);
             current.orders += 1;
           }
           grouped.set(key, current);
+          return;
         }
+
+        const key = entry.customerId || customerName;
+        const current = grouped.get(key) || {
+          displayName: customerName,
+          quantity: 0,
+          totalAmount: 0,
+          creditAmount: 0,
+          orders: 0,
+          orderKeys: new Set<string>(),
+        };
+
+        current.quantity += quantity;
+        current.totalAmount += totalAmount;
+        current.creditAmount += creditAmount;
+        if (!current.orderKeys.has(orderKey)) {
+          current.orderKeys.add(orderKey);
+          current.orders += 1;
+        }
+        grouped.set(key, current);
       });
 
       const rows = Array.from(grouped.values()).map((entry) => ({
-        displayName: entry.displayName,
+        displayName: entry.displayName ?? entry.customerName ?? '-',
+        customerName: entry.customerName ?? '-',
+        saleDate: entry.saleDate ?? '-',
         quantity: entry.quantity,
         totalAmount: entry.totalAmount,
         creditAmount: entry.creditAmount,
         creditPercentage: entry.totalAmount ? Number(((entry.creditAmount / entry.totalAmount) * 100).toFixed(1)) : 0,
         orders: entry.orders,
       }));
-      const columns = [
-        { label: reportSubtype.includes('customer') ? 'Customer' : 'Product', key: 'displayName' },
-        { label: 'Total Cases', key: 'quantity' },
-        { label: 'Total Amount', key: 'totalAmount' },
-        { label: 'Credit %', key: 'creditPercentage' },
-        { label: 'Order Count', key: 'orders' },
-      ];
+
+      const columns =
+        reportSubtype === 'orderByCustomerDate'
+          ? [
+              { label: 'Customer', key: 'customerName' },
+              { label: 'Date', key: 'saleDate' },
+              { label: 'Total Cases', key: 'quantity' },
+              { label: 'Total Amount', key: 'totalAmount' },
+              { label: 'Credit %', key: 'creditPercentage' },
+              { label: 'Order Count', key: 'orders' },
+            ]
+          : [
+              { label: reportSubtype.includes('customer') ? 'Customer' : 'Product', key: 'displayName' },
+              { label: 'Total Cases', key: 'quantity' },
+              { label: 'Total Amount', key: 'totalAmount' },
+              { label: 'Credit %', key: 'creditPercentage' },
+              { label: 'Order Count', key: 'orders' },
+            ];
 
       const sortedRows = rows.sort((a, b) => {
-        if (reportSubtype === 'customerByCases') {
+        if (reportSubtype === 'customerByCases' || reportSubtype === 'productByCount') {
           return b.quantity - a.quantity;
         }
-        if (reportSubtype === 'productByCount') {
-          return b.quantity - a.quantity;
+        if (reportSubtype === 'orderByCustomerDate') {
+          return a.customerName.localeCompare(b.customerName) || a.saleDate.localeCompare(b.saleDate);
         }
         return b.totalAmount - a.totalAmount;
       });

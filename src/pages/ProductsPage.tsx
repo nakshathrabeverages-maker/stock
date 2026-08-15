@@ -3,6 +3,7 @@ import { Layout, Card, Button, Input, Modal, Alert, Loading } from '@/components
 import { productService } from '@/services/productService';
 import { userService } from '@/services/userService';
 import { authService } from '@/services/authService';
+import { usePageLock } from '@/hooks/usePageLock';
 import { Product } from '@/types';
 
 export const ProductsPage: React.FC = () => {
@@ -27,6 +28,8 @@ export const ProductsPage: React.FC = () => {
     fetchProducts();
   }, []);
 
+  const { lockDate, isLocked: isPageLocked } = usePageLock('products');
+
   const fetchProducts = async () => {
     try {
       setLoading(true);
@@ -41,6 +44,10 @@ export const ProductsPage: React.FC = () => {
   };
 
   const handleAddNew = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(null);
     setFormData({
       name: '',
@@ -52,6 +59,10 @@ export const ProductsPage: React.FC = () => {
   };
 
   const handleEdit = (product: Product) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(product.id);
     setFormData({
       name: product.name,
@@ -63,6 +74,10 @@ export const ProductsPage: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (!formData.name || !formData.bottleSize) {
       setError('Please fill in all required fields');
       return;
@@ -93,6 +108,10 @@ export const ProductsPage: React.FC = () => {
   };
 
   const handleDisable = async (id: string) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (confirm('Are you sure you want to disable this product?')) {
       try {
         await productService.disable(id);
@@ -208,6 +227,10 @@ export const ProductsPage: React.FC = () => {
   };
 
   const handleImportStockCsv = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     const trimmedText = importCsvText.trim();
     if (!trimmedText) {
       setError('Please choose a CSV file or paste CSV content first.');
@@ -272,12 +295,19 @@ export const ProductsPage: React.FC = () => {
   return (
     <Layout title="Products" subtitle="Manage products">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
+      {isPageLocked && lockDate && (
+        <Alert
+          type="warning"
+          message={`This page is currently frozen for updates/deletes until ${lockDate.toLocaleDateString()}. Only read and export actions are allowed.`}
+          onClose={() => {}}
+        />
+      )}
 
       <div className="mb-6 flex flex-wrap gap-4">
-        <Button variant="primary" onClick={handleAddNew}>
+        <Button variant="primary" onClick={handleAddNew} disabled={isPageLocked}>
           ➕ Add New Product
         </Button>
-        <Button variant="secondary" onClick={() => setIsImportModalOpen(true)}>
+        <Button variant="secondary" onClick={() => setIsImportModalOpen(true)} disabled={isPageLocked}>
           ⬆ Update Stock via CSV
         </Button>
       </div>

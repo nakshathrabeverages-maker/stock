@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Layout, Card, Button, Input, Select, Modal, Alert, Loading } from '@/components';
+import { downloadCsv } from '@/utils/csvUtils';
 import { expenseService } from '@/services/expenseService';
 import { userService } from '@/services/userService';
+import { usePageLock } from '@/hooks/usePageLock';
 import { ExpenseEntry } from '@/types';
 
 const EXPENSE_TYPES = [
@@ -33,6 +35,7 @@ export const ExpensesPage: React.FC = () => {
   const [startDateFilter, setStartDateFilter] = useState<string>('');
   const [endDateFilter, setEndDateFilter] = useState<string>('');
   const [sortOption, setSortOption] = useState<string>('dateDesc');
+  const { lockDate, isLocked: isPageLocked } = usePageLock('expenses');
   const [formData, setFormData] = useState<Omit<ExpenseEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>>({
     date: new Date(),
     type: 'rawmaterial',
@@ -60,18 +63,30 @@ export const ExpensesPage: React.FC = () => {
   };
 
   const handleAddNew = () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(null);
     setFormData({ date: new Date(), type: 'rawmaterial', subtype: '', vendor: '', value: 0, remarks: '' });
     setIsModalOpen(true);
   };
 
   const handleEdit = (entry: ExpenseEntry) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     setEditingId(entry.id);
     setFormData({ date: entry.date, type: entry.type, subtype: entry.subtype || '', vendor: entry.vendor || '', value: entry.value, remarks: entry.remarks || '' });
     setIsModalOpen(true);
   };
 
   const handleSave = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
+      return;
+    }
     if (!formData.type || !formData.date || formData.value <= 0) {
       setError('Please select type, date and enter a valid value');
       return;
@@ -93,6 +108,10 @@ export const ExpensesPage: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Deletes are disabled.`);
+      return;
+    }
     if (!window.confirm('Are you sure you want to delete this expense?')) return;
     try {
       setLoading(true);
@@ -148,14 +167,51 @@ export const ExpensesPage: React.FC = () => {
       });
   }, [entries, typeFilter, startDateFilter, endDateFilter, sortOption]);
 
+  const handleExportExpenses = () => {
+    if (!filteredEntries.length) {
+      setError('No expense data available to export.');
+      return;
+    }
+
+    const rows = filteredEntries.map((entry) => ({
+      Date: new Date(entry.date).toLocaleDateString(),
+      Type: entry.type.replace(/_/g, ' '),
+      Subtype: entry.subtype || '',
+      Vendor: entry.vendor || '',
+      Amount: (entry.value ?? 0).toFixed(2),
+      Remarks: entry.remarks || '',
+      'Created By': userMap[entry.createdBy] || entry.createdBy || '-',
+    }));
+
+    downloadCsv(rows, [
+      { label: 'Date', key: 'Date' },
+      { label: 'Type', key: 'Type' },
+      { label: 'Subtype', key: 'Subtype' },
+      { label: 'Vendor', key: 'Vendor' },
+      { label: 'Amount', key: 'Amount' },
+      { label: 'Remarks', key: 'Remarks' },
+      { label: 'Created By', key: 'Created By' },
+    ], `expenses-${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
   return (
     <Layout title="Expenses" subtitle="Track company expenses">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
+      {isPageLocked && lockDate && (
+        <Alert
+          type="warning"
+          message={`This page is currently frozen for updates/deletes until ${lockDate.toLocaleDateString()}. Only read and export actions are allowed.`}
+          onClose={() => {}}
+        />
+      )}
 
       <div className="mb-6 flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-4">
-          <Button variant="primary" onClick={handleAddNew}>
+<Button variant="primary" onClick={handleAddNew} disabled={isPageLocked}>
             ➕ Add Expense
+          </Button>
+          <Button variant="secondary" onClick={handleExportExpenses}>
+            ⬇ Export CSV
           </Button>
 
           <div className="flex flex-wrap gap-3">
@@ -228,10 +284,10 @@ export const ExpensesPage: React.FC = () => {
                   <td className="px-6 py-4 text-sm text-gray-800">{userMap[e.createdBy] || e.createdBy || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.remarks || '-'}</td>
                   <td className="px-6 py-4 text-sm space-x-2">
-                    <Button variant="secondary" size="sm" onClick={() => handleEdit(e)}>
+                    <Button variant="secondary" size="sm" onClick={() => handleEdit(e)} disabled={isPageLocked}>
                       Edit
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => handleDelete(e.id)}>
+                    <Button variant="danger" size="sm" onClick={() => handleDelete(e.id)} disabled={isPageLocked}>
                       Delete
                     </Button>
                   </td>

@@ -8,6 +8,7 @@ import { purchaseService } from '@/services/purchaseService';
 import { salesService } from '@/services/salesService';
 import { expenseService } from '@/services/expenseService';
 import { customerService } from '@/services/customerService';
+import { getStartOfDay, getEndOfDay, parseDateInput } from '@/utils/dateUtils';
 import {
   ProductionEntry,
   MaterialUsageEntry,
@@ -54,6 +55,11 @@ const REPORT_SORT_OPTIONS: Record<string, { value: string; label: string }[]> = 
     { value: 'date', label: 'Date' },
     { value: 'type', label: 'Type' },
     { value: 'value', label: 'Amount' },
+  ],
+  expensesByType: [
+    { value: 'type', label: 'Type' },
+    { value: 'totalAmount', label: 'Total Amount' },
+    { value: 'count', label: 'Count' },
   ],
   customers: [
     { value: 'name', label: 'Customer Name' },
@@ -110,6 +116,11 @@ const REPORT_FILTER_COLUMNS: Record<string, { value: string; label: string }[]> 
     { value: 'dateLabel', label: 'Date' },
     { value: 'type', label: 'Type' },
     { value: 'subtype', label: 'Subtype' },
+  ],
+  expensesByType: [
+    { value: 'type', label: 'Type' },
+    { value: 'totalAmount', label: 'Total Amount' },
+    { value: 'count', label: 'Count' },
   ],
   customers: [
     { value: 'name', label: 'Customer Name' },
@@ -224,6 +235,9 @@ export const ReportsPage: React.FC = () => {
     { customerId: string; customerName: string; totalCredit: number; orders: SaleEntry[] }[]
   >([]);
   const [expenseData, setExpenseData] = useState<ExpenseEntry[]>([]);
+  const [expenseByTypeData, setExpenseByTypeData] = useState<
+    { type: string; totalAmount: number; count: number }[]
+  >([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [productAvailabilityData, setProductAvailabilityData] = useState<Product[]>([]);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
@@ -306,6 +320,16 @@ export const ReportsPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const unsubscribe = salesService.subscribeToSalesChanges(() => {
+      if (reportType === 'sales' || reportType === 'credit' || reportType === 'revenue') {
+        generateReport(reportType);
+      }
+    });
+
+    return unsubscribe;
+  }, [reportType]);
+
+  useEffect(() => {
     const sortOptions = REPORT_SORT_OPTIONS[reportType] || [];
     setReportSortKey(sortOptions[0]?.value || '');
     setReportSortDirection('asc');
@@ -334,9 +358,8 @@ export const ReportsPage: React.FC = () => {
   const generateReport = async (type: string) => {
     try {
       setLoading(true);
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
+      const start = getStartOfDay(startDate);
+      const end = getEndOfDay(endDate);
 
       if (type === 'production') {
         const data = await productionService.getAll({ startDate: start, endDate: end });
@@ -373,6 +396,24 @@ export const ReportsPage: React.FC = () => {
       } else if (type === 'expenses') {
         const data = await expenseService.getAll({ startDate: start, endDate: end });
         setExpenseData(data);
+      } else if (type === 'expensesByType') {
+        const data = await expenseService.getAll({ startDate: start, endDate: end });
+        const grouped = new Map<string, { totalAmount: number; count: number }>();
+
+        data.forEach((entry) => {
+          const current = grouped.get(entry.type) || { totalAmount: 0, count: 0 };
+          current.totalAmount += entry.value ?? 0;
+          current.count += 1;
+          grouped.set(entry.type, current);
+        });
+
+        setExpenseByTypeData(
+          Array.from(grouped.entries()).map(([type, summary]) => ({
+            type,
+            totalAmount: summary.totalAmount,
+            count: summary.count,
+          }))
+        );
       } else if (type === 'revenue') {
         const [sales, expenses] = await Promise.all([
           salesService.getAll({ startDate: start, endDate: end }),
@@ -461,6 +502,14 @@ export const ReportsPage: React.FC = () => {
           { label: 'Orders', key: 'orders' },
         ];
         rows = rows.map((row) => ({ ...row, orders: row.orders?.length ?? 0 }));
+        break;
+      case 'expensesByType':
+        rows = filteredExpenseByTypeRows;
+        headers = [
+          { label: 'Type', key: 'typeLabel' },
+          { label: 'Total Amount', key: 'totalAmount' },
+          { label: 'Count', key: 'count' },
+        ];
         break;
       case 'expenses':
         rows = filteredExpenseRows;
@@ -650,6 +699,20 @@ export const ReportsPage: React.FC = () => {
     [expenseRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
+  const expenseByTypeRows = useMemo(
+    () =>
+      expenseByTypeData.map((entry) => ({
+        ...entry,
+        typeLabel: entry.type.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()),
+      })),
+    [expenseByTypeData]
+  );
+
+  const filteredExpenseByTypeRows = useMemo(
+    () => applyFilterAndSort(expenseByTypeRows, ['typeLabel', 'totalAmount', 'count']),
+    [expenseByTypeRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
+  );
+
   const customerRows = useMemo(
     () => customers.map((customer) => ({ ...customer })),
     [customers]
@@ -699,6 +762,8 @@ export const ReportsPage: React.FC = () => {
         return expenseRows;
       case 'customers':
         return customerRows;
+      case 'expensesByType':
+        return expenseByTypeRows;
       case 'stock':
       case 'lowstock':
         return stockRows;
@@ -740,6 +805,7 @@ export const ReportsPage: React.FC = () => {
                 { value: 'sales', label: 'Sales' },
                 { value: 'credit', label: 'Credit Report' },
                 { value: 'expenses', label: 'Expenses' },
+                { value: 'expensesByType', label: 'Expenses by Type' },
                 { value: 'customers', label: 'Customers List' },
                 { value: 'revenue', label: 'Revenue Summary' },
                 { value: 'stock', label: 'Stock Report' },
@@ -1088,6 +1154,38 @@ export const ReportsPage: React.FC = () => {
               </table>
               <div className="mt-4 text-right font-semibold">
                 Total Expenses: ₹{expenseData.reduce((sum, entry) => sum + (entry.value ?? 0), 0).toFixed(2)}
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-600">No expense data found for the selected period.</p>
+          )}
+        </Card>
+      )}
+
+      {reportType === 'expensesByType' && (
+        <Card title="Expenses by Type Report" subtitle="Aggregated expense totals grouped by type">
+          {filteredExpenseByTypeRows.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-semibold">Type</th>
+                    <th className="px-4 py-2 text-right font-semibold">Total Amount</th>
+                    <th className="px-4 py-2 text-right font-semibold">Count</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredExpenseByTypeRows.map((entry) => (
+                    <tr key={entry.type}>
+                      <td className="px-4 py-2">{entry.typeLabel}</td>
+                      <td className="px-4 py-2 text-right">₹{entry.totalAmount.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right">{entry.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-4 text-right font-semibold">
+                Total Expenses: ₹{expenseByTypeRows.reduce((sum, entry) => sum + (entry.totalAmount ?? 0), 0).toFixed(2)}
               </div>
             </div>
           ) : (
