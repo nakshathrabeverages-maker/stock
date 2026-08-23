@@ -437,20 +437,33 @@ export const CreditUpdatePage: React.FC = () => {
         }
 
         const totalPrice = matchedSale.totalPrice ?? matchedSale.quantity * matchedSale.pricePerCase;
+        // If CSV provides paidAmount, honor it and compute remaining; otherwise use remainingAmount if provided
         let desiredRemainingNum = NaN;
-        if (Number.isFinite(batch.remainingAmount)) desiredRemainingNum = batch.remainingAmount as number;
-        else if (Number.isFinite(batch.totalAmount)) desiredRemainingNum = (batch.totalAmount as number) - (Number.isFinite(batch.paidAmount) ? (batch.paidAmount as number) : 0);
-        if (!Number.isFinite(desiredRemainingNum)) {
+        let finalPaidAmount: number | undefined;
+        if (Number.isFinite(batch.paidAmount)) {
+          finalPaidAmount = batch.paidAmount as number;
+          desiredRemainingNum = totalPrice - finalPaidAmount;
+        } else if (Number.isFinite(batch.remainingAmount)) {
+          desiredRemainingNum = batch.remainingAmount as number;
+          finalPaidAmount = totalPrice - desiredRemainingNum;
+        } else if (Number.isFinite(batch.totalAmount) && Number.isFinite(batch.paidAmount)) {
+          // handled above, but keep for completeness
+          finalPaidAmount = batch.paidAmount as number;
+          desiredRemainingNum = totalPrice - finalPaidAmount;
+        }
+
+        if (!Number.isFinite(desiredRemainingNum) || !Number.isFinite(finalPaidAmount)) {
           throw new Error(`Row ${batch.rowIndex + 2}: missing remaining/total/paid information for per-sale update.`);
         }
 
-        if (desiredRemainingNum > totalPrice + 0.5) {
-          throw new Error(`Row ${batch.rowIndex + 2}: desired remaining ₹${desiredRemainingNum.toFixed(2)} exceeds sale total ₹${totalPrice.toFixed(2)}.`);
+        const paid = finalPaidAmount as number;
+        if (paid < -0.5 || paid > totalPrice + 0.5) {
+          throw new Error(`Row ${batch.rowIndex + 2}: provided paid amount ₹${paid.toFixed(2)} is invalid for sale total ₹${totalPrice.toFixed(2)}.`);
         }
 
         const newRemaining = Math.max(Math.round(desiredRemainingNum * 100) / 100, 0);
         const normalizedRemaining = newRemaining < 10 ? 0 : newRemaining;
-        const newPaidAmount = Math.max(Math.round((totalPrice - normalizedRemaining) * 100) / 100, 0);
+        const newPaidAmount = Math.max(Math.round(paid * 100) / 100, 0);
         const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
 
         await salesService.update(matchedSale.id, {
