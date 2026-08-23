@@ -279,10 +279,9 @@ export const CreditUpdatePage: React.FC = () => {
       rowIndex: number;
       customerId: string;
       customerName: string;
-      start: Date;
-      end: Date;
+      date: Date;
       amount: number;
-      creditSales: SaleEntry[];
+      sale: SaleEntry;
     }> = [];
     const validationErrors: string[] = [];
 
@@ -307,24 +306,23 @@ export const CreditUpdatePage: React.FC = () => {
         continue;
       }
 
-      const parsedStartDate = row.startDate ? parseDateInput(row.startDate) : row.date ? parseDateInput(row.date) : null;
-      const parsedEndDate = row.endDate ? parseDateInput(row.endDate) : row.date ? parseDateInput(row.date) : null;
-      if (!parsedStartDate || Number.isNaN(parsedStartDate.getTime())) {
-        validationErrors.push(`Row ${rowIndex + 2}: invalid date '${row.date || row.startDate}'.`);
+      const parsedDate = row.date ? parseDateInput(row.date) : null;
+      if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+        validationErrors.push(`Row ${rowIndex + 2}: invalid or missing date '${row.date || ''}'.`);
         continue;
       }
 
-      const start = parsedStartDate;
-      const end = parsedEndDate && !Number.isNaN(parsedEndDate.getTime()) ? parsedEndDate : parsedStartDate;
-      end.setHours(23, 59, 59, 999);
+      // search for sales on that exact day for the customer
+      const dayStart = new Date(parsedDate);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(parsedDate);
+      dayEnd.setHours(23, 59, 59, 999);
 
-      const sales = await salesService.getAll({ startDate: start, endDate: end });
-      const creditSales = sales
-        .filter((entry) => entry.customerId === customer.id && (entry.remainingAmount ?? 0) > 0)
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const salesForDay = await salesService.getAll({ startDate: dayStart, endDate: dayEnd });
+      const matched = salesForDay.find((entry) => entry.customerId === customer.id && entry.date && new Date(entry.date).getTime() >= dayStart.getTime() && new Date(entry.date).getTime() <= dayEnd.getTime());
 
-      if (!creditSales.length) {
-        validationErrors.push(`Row ${rowIndex + 2}: no outstanding credit records found for ${row.customerName} on ${row.date || row.startDate}.`);
+      if (!matched) {
+        validationErrors.push(`Row ${rowIndex + 2}: sale record not found for ${row.customerName} on ${row.date}.`);
         continue;
       }
 
@@ -332,10 +330,9 @@ export const CreditUpdatePage: React.FC = () => {
         rowIndex,
         customerId: customer.id,
         customerName: row.customerName,
-        start,
-        end,
+        date: parsedDate,
         amount,
-        creditSales,
+        sale: matched,
       });
     }
 
@@ -354,37 +351,37 @@ export const CreditUpdatePage: React.FC = () => {
       setError('');
       setSuccess('');
 
+
       let totalApplied = 0;
       let rowCount = 0;
 
       for (const batch of recordBatch) {
         rowCount += 1;
-        let remainingAdjustment = batch.amount;
-        let appliedForRow = 0;
+        const record = batch.sale;
+        const currentRemaining = record.remainingAmount ?? 0;
+        const totalPrice = record.totalPrice ?? record.quantity * record.pricePerCase;
 
-        for (const record of batch.creditSales) {
-          if (remainingAdjustment <= 0) break;
-          const currentRemaining = record.remainingAmount ?? 0;
-          if (currentRemaining <= 0) continue;
-          const applyAmount = Math.min(currentRemaining, remainingAdjustment);
-          const totalPrice = record.totalPrice ?? record.quantity * record.pricePerCase;
-          const newRemainingRaw = currentRemaining - applyAmount;
-          const newRemaining = Math.max(Math.round(newRemainingRaw * 100) / 100, 0);
-          const normalizedRemaining = newRemaining < 10 ? 0 : newRemaining;
-          const newPaidAmount = totalPrice - normalizedRemaining;
-          const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
+        // treat CSV amount as desired remaining outstanding for that sale
+        let desiredRemaining = batch.amount;
+        if (!Number.isFinite(desiredRemaining) || desiredRemaining < 0) desiredRemaining = 0;
 
-          await salesService.update(record.id, {
-            remainingAmount: normalizedRemaining,
-            paidAmount: Math.max(Math.round(newPaidAmount * 100) / 100, 0),
-            paymentStatus,
-          });
-
-          remainingAdjustment -= applyAmount;
-          appliedForRow += applyAmount;
+        // cap to totalPrice
+        if (desiredRemaining > totalPrice) {
+          desiredRemaining = totalPrice;
         }
 
-        totalApplied += appliedForRow;
+        const newRemainingRaw = Math.max(Math.round(desiredRemaining * 100) / 100, 0);
+        const normalizedRemaining = newRemainingRaw < 10 ? 0 : newRemainingRaw;
+        const newPaidAmount = Math.max(Math.round((totalPrice - normalizedRemaining) * 100) / 100, 0);
+        const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
+
+        await salesService.update(record.id, {
+          remainingAmount: normalizedRemaining,
+          paidAmount: newPaidAmount,
+          paymentStatus,
+        });
+
+        totalApplied += Math.abs(currentRemaining - normalizedRemaining);
       }
 
       await fetchRecords();
