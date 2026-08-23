@@ -223,12 +223,18 @@ export const CreditUpdatePage: React.FC = () => {
           return '';
         };
 
+        const parseNumber = (val: string) => {
+          if (!val) return NaN;
+          const n = Number(String(val).replace(/[^0-9.-]+/g, ''));
+          return Number.isFinite(n) ? n : NaN;
+        };
+
         return {
           customerName: pickValue('customer', 'customername', 'party', 'partyname', 'name'),
           date: pickValue('date', 'transactiondate', 'paiddate'),
-          startDate: pickValue('startdate', 'datefrom'),
-          endDate: pickValue('enddate', 'dateto'),
-          amount: parseFloat(pickValue('amount', 'adjustment', 'updateamount', 'creditamount')) || 0,
+          creditAmount: parseNumber(pickValue('credit', 'creditamount', 'amount', 'total', 'credit_amount')),
+          receivedAmount: parseNumber(pickValue('received', 'receivedamount', 'paid', 'paidamount', 'received_amount')),
+          balanceAmount: parseNumber(pickValue('balance', 'balanceamount', 'remaining', 'remainingamount', 'balance_amount')),
         };
       });
   };
@@ -300,9 +306,12 @@ export const CreditUpdatePage: React.FC = () => {
         continue;
       }
 
-      const amount = row.amount;
-      if (!(amount > 0)) {
-        validationErrors.push(`Row ${rowIndex + 2}: invalid amount '${row.amount}'.`);
+      const creditAmount = Number.isFinite(row.creditAmount) ? row.creditAmount : NaN;
+      const receivedAmount = Number.isFinite(row.receivedAmount) ? row.receivedAmount : NaN;
+      const balanceAmount = Number.isFinite(row.balanceAmount) ? row.balanceAmount : NaN;
+
+      if (Number.isNaN(balanceAmount) && (Number.isNaN(creditAmount) || Number.isNaN(receivedAmount))) {
+        validationErrors.push(`Row ${rowIndex + 2}: provide either 'balance' or both 'credit' and 'received' amounts.`);
         continue;
       }
 
@@ -312,7 +321,7 @@ export const CreditUpdatePage: React.FC = () => {
         continue;
       }
 
-      // search for sales on that exact day for the customer
+      // search sales for that day
       const dayStart = new Date(parsedDate);
       dayStart.setHours(0, 0, 0, 0);
       const dayEnd = new Date(parsedDate);
@@ -328,12 +337,14 @@ export const CreditUpdatePage: React.FC = () => {
         continue;
       }
 
+      const desiredBalance = !Number.isNaN(balanceAmount) ? balanceAmount : creditAmount - receivedAmount;
+
       recordBatch.push({
         rowIndex,
         customerId: customer.id,
         customerName: row.customerName,
         date: parsedDate,
-        amount,
+        amount: desiredBalance,
         sales: matchedSales,
       });
     }
