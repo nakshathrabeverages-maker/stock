@@ -337,6 +337,19 @@ export const CreditUpdatePage: React.FC = () => {
         continue;
       }
 
+      // If CSV provided 'credit' amount, ensure it matches the sum of sales totalPrice for that date
+      const salesTotal = matchedSales.reduce((s, r) => s + (r.totalPrice ?? (r.quantity * r.pricePerCase || 0)), 0);
+      const creditAmountProvided = Number.isFinite(row.creditAmount) ? row.creditAmount : NaN;
+      if (!Number.isNaN(creditAmountProvided)) {
+        // allow small rounding tolerance
+        if (Math.abs(creditAmountProvided - salesTotal) > 0.5) {
+          validationErrors.push(
+            `Row ${rowIndex + 2}: CSV credit amount ₹${creditAmountProvided.toFixed(2)} does not match total sale amount ₹${salesTotal.toFixed(2)} for that date.`
+          );
+          continue;
+        }
+      }
+
       const desiredBalance = !Number.isNaN(balanceAmount) ? balanceAmount : creditAmount - receivedAmount;
 
       recordBatch.push({
