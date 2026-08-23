@@ -232,9 +232,14 @@ export const CreditUpdatePage: React.FC = () => {
         return {
           customerName: pickValue('customer', 'customername', 'party', 'partyname', 'name'),
           date: pickValue('date', 'transactiondate', 'paiddate'),
-          creditAmount: parseNumber(pickValue('credit', 'creditamount', 'amount', 'total', 'credit_amount')),
-          receivedAmount: parseNumber(pickValue('received', 'receivedamount', 'paid', 'paidamount', 'received_amount')),
-          balanceAmount: parseNumber(pickValue('balance', 'balanceamount', 'remaining', 'remainingamount', 'balance_amount')),
+          productName: pickValue('product', 'productname', 'item', 'itemname', 'name'),
+          quantity: parseNumber(pickValue('quantity', 'qty', 'quantity')),
+          totalAmount: parseNumber(pickValue('total', 'totalamount', 'invoiceamount', 'amount')),
+          paidAmount: parseNumber(pickValue('paid', 'paidamount', 'received', 'receivedamount')),
+          remainingAmount: parseNumber(pickValue('balance', 'balanceamount', 'remaining', 'remainingamount', 'balance_amount')),
+          creditAmount: parseNumber(pickValue('credit', 'creditamount', 'credit_amount')),
+          receivedAmount: parseNumber(pickValue('received', 'receivedamount', 'received_amount')),
+          balanceAmount: parseNumber(pickValue('balance', 'balanceamount', 'balance_amount')),
         };
       });
   };
@@ -281,7 +286,20 @@ export const CreditUpdatePage: React.FC = () => {
       return;
     }
 
-    const recordBatch: Array<{
+    const perSaleBatch: Array<{
+      rowIndex: number;
+      customerId: string;
+      customerName: string;
+      date: Date;
+      productName: string;
+      quantity?: number;
+      totalAmount?: number;
+      paidAmount?: number;
+      remainingAmount?: number;
+      sales: SaleEntry[];
+    }> = [];
+
+    const perCustomerBatch: Array<{
       rowIndex: number;
       customerId: string;
       customerName: string;
@@ -350,16 +368,32 @@ export const CreditUpdatePage: React.FC = () => {
         }
       }
 
-      const desiredBalance = !Number.isNaN(balanceAmount) ? balanceAmount : creditAmount - receivedAmount;
-
-      recordBatch.push({
-        rowIndex,
-        customerId: customer.id,
-        customerName: row.customerName,
-        date: parsedDate,
-        amount: desiredBalance,
-        sales: matchedSales,
-      });
+      // If CSV row contains productName or remainingAmount, treat as per-sale update
+      const hasPerSale = String(row.productName ?? '').trim() !== '' || Number.isFinite(row.remainingAmount);
+      if (hasPerSale) {
+        perSaleBatch.push({
+          rowIndex,
+          customerId: customer.id,
+          customerName: row.customerName,
+          date: parsedDate,
+          productName: row.productName,
+          quantity: Number.isFinite(row.quantity) ? row.quantity : undefined,
+          totalAmount: Number.isFinite(row.totalAmount) ? row.totalAmount : undefined,
+          paidAmount: Number.isFinite(row.paidAmount) ? row.paidAmount : undefined,
+          remainingAmount: Number.isFinite(row.remainingAmount) ? row.remainingAmount : undefined,
+          sales: matchedSales,
+        });
+      } else {
+        const desiredBalance = !Number.isNaN(balanceAmount) ? balanceAmount : creditAmount - receivedAmount;
+        perCustomerBatch.push({
+          rowIndex,
+          customerId: customer.id,
+          customerName: row.customerName,
+          date: parsedDate,
+          amount: desiredBalance,
+          sales: matchedSales,
+        });
+      }
     }
 
     if (validationErrors.length) {
@@ -367,7 +401,7 @@ export const CreditUpdatePage: React.FC = () => {
       return;
     }
 
-    if (!recordBatch.length) {
+    if (!perSaleBatch.length && !perCustomerBatch.length) {
       setError('No valid CSV rows were found to apply.');
       return;
     }
@@ -381,7 +415,55 @@ export const CreditUpdatePage: React.FC = () => {
       let totalApplied = 0;
       let rowCount = 0;
 
-      for (const batch of recordBatch) {
+      // First process per-sale exact updates
+      for (const batch of perSaleBatch) {
+        rowCount += 1;
+        // match specific sale by product if possible
+        let matchedSale: SaleEntry | undefined;
+        if (batch.productName) {
+          const normalizedProduct = String(batch.productName).toLowerCase().replace(/[^a-z0-9]+/g, '');
+          matchedSale = batch.sales.find((s) => {
+            const prod = products.find((p) => p.id === s.productId);
+            const prodName = (prod?.name || s.productId || '').toString().toLowerCase();
+            const norm = prodName.replace(/[^a-z0-9]+/g, '');
+            return norm.includes(normalizedProduct) || normalizedProduct.includes(norm);
+          });
+        }
+        // if no product match, but only one sale exists, use it
+        if (!matchedSale && batch.sales.length === 1) matchedSale = batch.sales[0];
+
+        if (!matchedSale) {
+          throw new Error(`Row ${batch.rowIndex + 2}: could not match sale by product for ${batch.customerName} on ${batch.date.toISOString().slice(0,10)}.`);
+        }
+
+        const totalPrice = matchedSale.totalPrice ?? matchedSale.quantity * matchedSale.pricePerCase;
+        let desiredRemainingNum = NaN;
+        if (Number.isFinite(batch.remainingAmount)) desiredRemainingNum = batch.remainingAmount as number;
+        else if (Number.isFinite(batch.totalAmount)) desiredRemainingNum = (batch.totalAmount as number) - (Number.isFinite(batch.paidAmount) ? (batch.paidAmount as number) : 0);
+        if (!Number.isFinite(desiredRemainingNum)) {
+          throw new Error(`Row ${batch.rowIndex + 2}: missing remaining/total/paid information for per-sale update.`);
+        }
+
+        if (desiredRemainingNum > totalPrice + 0.5) {
+          throw new Error(`Row ${batch.rowIndex + 2}: desired remaining ₹${desiredRemainingNum.toFixed(2)} exceeds sale total ₹${totalPrice.toFixed(2)}.`);
+        }
+
+        const newRemaining = Math.max(Math.round(desiredRemainingNum * 100) / 100, 0);
+        const normalizedRemaining = newRemaining < 10 ? 0 : newRemaining;
+        const newPaidAmount = Math.max(Math.round((totalPrice - normalizedRemaining) * 100) / 100, 0);
+        const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
+
+        await salesService.update(matchedSale.id, {
+          remainingAmount: normalizedRemaining,
+          paidAmount: newPaidAmount,
+          paymentStatus,
+        });
+
+        totalApplied += Math.abs((matchedSale.remainingAmount ?? 0) - normalizedRemaining);
+      }
+
+      // Then process per-customer aggregated rows (unchanged logic)
+      for (const batch of perCustomerBatch) {
         rowCount += 1;
         const sales = batch.sales;
 
