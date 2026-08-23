@@ -281,7 +281,7 @@ export const CreditUpdatePage: React.FC = () => {
       customerName: string;
       date: Date;
       amount: number;
-      sale: SaleEntry;
+      sales: SaleEntry[];
     }> = [];
     const validationErrors: string[] = [];
 
@@ -319,10 +319,12 @@ export const CreditUpdatePage: React.FC = () => {
       dayEnd.setHours(23, 59, 59, 999);
 
       const salesForDay = await salesService.getAll({ startDate: dayStart, endDate: dayEnd });
-      const matched = salesForDay.find((entry) => entry.customerId === customer.id && entry.date && new Date(entry.date).getTime() >= dayStart.getTime() && new Date(entry.date).getTime() <= dayEnd.getTime());
+      const matchedSales = salesForDay
+        .filter((entry) => entry.customerId === customer.id && entry.date && new Date(entry.date).getTime() >= dayStart.getTime() && new Date(entry.date).getTime() <= dayEnd.getTime())
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      if (!matched) {
-        validationErrors.push(`Row ${rowIndex + 2}: sale record not found for ${row.customerName} on ${row.date}.`);
+      if (!matchedSales.length) {
+        validationErrors.push(`Row ${rowIndex + 2}: no sale records found for ${row.customerName} on ${row.date}.`);
         continue;
       }
 
@@ -332,7 +334,7 @@ export const CreditUpdatePage: React.FC = () => {
         customerName: row.customerName,
         date: parsedDate,
         amount,
-        sale: matched,
+        sales: matchedSales,
       });
     }
 
@@ -357,31 +359,70 @@ export const CreditUpdatePage: React.FC = () => {
 
       for (const batch of recordBatch) {
         rowCount += 1;
-        const record = batch.sale;
-        const currentRemaining = record.remainingAmount ?? 0;
-        const totalPrice = record.totalPrice ?? record.quantity * record.pricePerCase;
+        const sales = batch.sales;
 
-        // treat CSV amount as desired remaining outstanding for that sale
-        let desiredRemaining = batch.amount;
-        if (!Number.isFinite(desiredRemaining) || desiredRemaining < 0) desiredRemaining = 0;
+        const currentTotalRemaining = sales.reduce((s, r) => s + (r.remainingAmount ?? 0), 0);
+        let desiredTotalRemaining = Number.isFinite(batch.amount) && batch.amount >= 0 ? batch.amount : 0;
 
-        // cap to totalPrice
-        if (desiredRemaining > totalPrice) {
-          desiredRemaining = totalPrice;
+        // compute total capacity (sum of totalPrice) to validate increases
+        const totalCapacity = sales.reduce((s, r) => s + (r.totalPrice ?? (r.quantity * r.pricePerCase || 0)), 0);
+        if (desiredTotalRemaining > totalCapacity) {
+          throw new Error(`Row ${batch.rowIndex + 2}: desired amount ${desiredTotalRemaining} exceeds total possible outstanding (${totalCapacity.toFixed(2)}) for that date.`);
         }
 
-        const newRemainingRaw = Math.max(Math.round(desiredRemaining * 100) / 100, 0);
-        const normalizedRemaining = newRemainingRaw < 10 ? 0 : newRemainingRaw;
-        const newPaidAmount = Math.max(Math.round((totalPrice - normalizedRemaining) * 100) / 100, 0);
-        const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
+        // If we need to reduce outstanding (current > desired), apply payments across sales oldest-first
+        let diff = currentTotalRemaining - desiredTotalRemaining;
+        if (diff > 0) {
+          for (const record of sales) {
+            if (diff <= 0) break;
+            const currentRemaining = record.remainingAmount ?? 0;
+            if (currentRemaining <= 0) continue;
+            const applyAmount = Math.min(currentRemaining, diff);
+            const totalPrice = record.totalPrice ?? record.quantity * record.pricePerCase;
+            const newRemainingRaw = currentRemaining - applyAmount;
+            const newRemaining = Math.max(Math.round(newRemainingRaw * 100) / 100, 0);
+            const normalizedRemaining = newRemaining < 10 ? 0 : newRemaining;
+            const newPaidAmount = Math.max(Math.round((totalPrice - normalizedRemaining) * 100) / 100, 0);
+            const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
 
-        await salesService.update(record.id, {
-          remainingAmount: normalizedRemaining,
-          paidAmount: newPaidAmount,
-          paymentStatus,
-        });
+            await salesService.update(record.id, {
+              remainingAmount: normalizedRemaining,
+              paidAmount: newPaidAmount,
+              paymentStatus,
+            });
 
-        totalApplied += Math.abs(currentRemaining - normalizedRemaining);
+            diff -= applyAmount;
+            totalApplied += applyAmount;
+          }
+        } else if (diff < 0) {
+          // need to increase outstanding by |diff|, distribute across sales up to their capacity
+          let needed = Math.abs(diff);
+          for (const record of sales) {
+            if (needed <= 0) break;
+            const currentRemaining = record.remainingAmount ?? 0;
+            const totalPrice = record.totalPrice ?? record.quantity * record.pricePerCase;
+            const capacity = Math.max(totalPrice - currentRemaining, 0);
+            if (capacity <= 0) continue;
+            const addAmount = Math.min(capacity, needed);
+            const newRemainingRaw = currentRemaining + addAmount;
+            const newRemaining = Math.max(Math.round(newRemainingRaw * 100) / 100, 0);
+            const normalizedRemaining = newRemaining < 10 ? 0 : newRemaining;
+            const newPaidAmount = Math.max(Math.round((totalPrice - normalizedRemaining) * 100) / 100, 0);
+            const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
+
+            await salesService.update(record.id, {
+              remainingAmount: normalizedRemaining,
+              paidAmount: newPaidAmount,
+              paymentStatus,
+            });
+
+            needed -= addAmount;
+            totalApplied += addAmount;
+          }
+          if (needed > 0) {
+            throw new Error(`Row ${batch.rowIndex + 2}: unable to increase outstanding by ${Math.abs(diff)}; not enough capacity on sales for that date.`);
+          }
+        }
       }
 
       await fetchRecords();
