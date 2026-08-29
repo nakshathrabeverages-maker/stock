@@ -1,0 +1,5 @@
+Row,Customer,Date,Product,Total,Paid,Remaining,Applied,NewPaid,NewRemaining,Notes
+1,Sresta Enterprises (Tadepalligudem),2026-07-02,B2 WHITE 500 ML,77000,73500,3500,3500,77000,0,Allocated smallest outstanding first
+1,Sresta Enterprises (Tadepalligudem),2026-07-02,SMART 500 ML,33000,0,33000,31900,31900,1100,Allocated remaining
+2,Sresta Enterprises (Tadepalligudem),2026-07-20,B2 BLUE 500 ML,33000,3900,29100,-3900,0,33000,Reduced paid to match CSV
+3,Sresta Enterprises (Tadepalligudem),2026-07-28,ICEBERG BLACK 500 ML,22000,0,22000,0,0,22000,No change

@@ -9,6 +9,7 @@ import { getStartOfDay, getEndOfDay } from '@/utils/dateUtils';
 const REPORT_SUBTYPE_OPTIONS = [
   { value: 'customerByAmount', label: 'Sales by Customer - Amount' },
   { value: 'customerByCases', label: 'Sales by Customer - Cases' },
+  { value: 'dailyCasesSold', label: 'Cases Sold by Day' },
   { value: 'orderByCustomerDate', label: 'Orders by Customer & Date' },
   { value: 'productByCount', label: 'Sales by Product - Count' },
   { value: 'productByValue', label: 'Sales by Product - Value' },
@@ -148,6 +149,27 @@ export const ReportsAggregationPage: React.FC = () => {
         const totalAmount = Number(entry.totalPrice ?? 0);
         const creditAmount = Number(entry.remainingAmount ?? 0);
 
+        if (reportSubtype === 'dailyCasesSold') {
+          const current = grouped.get(orderDateKey) || {
+            saleDate: orderDateKey,
+            quantity: 0,
+            totalAmount: 0,
+            creditAmount: 0,
+            orders: 0,
+            orderKeys: new Set<string>(),
+          };
+
+          current.quantity += quantity;
+          current.totalAmount += totalAmount;
+          current.creditAmount += creditAmount;
+          if (!current.orderKeys.has(orderKey)) {
+            current.orderKeys.add(orderKey);
+            current.orders += 1;
+          }
+          grouped.set(orderDateKey, current);
+          return;
+        }
+
         if (reportSubtype === 'orderByCustomerDate') {
           const key = `${entry.customerId || customerName}|${orderDateKey}`;
           const current = grouped.get(key) || {
@@ -225,7 +247,15 @@ export const ReportsAggregationPage: React.FC = () => {
       }));
 
       const columns =
-        reportSubtype === 'orderByCustomerDate'
+        reportSubtype === 'dailyCasesSold'
+          ? [
+              { label: 'Date', key: 'saleDate' },
+              { label: 'Cases Sold', key: 'quantity' },
+              { label: 'Total Amount', key: 'totalAmount' },
+              { label: 'Credit %', key: 'creditPercentage' },
+              { label: 'Order Count', key: 'orders' },
+            ]
+          : reportSubtype === 'orderByCustomerDate'
           ? [
               { label: 'Customer', key: 'customerName' },
               { label: 'Date', key: 'saleDate' },
@@ -245,6 +275,9 @@ export const ReportsAggregationPage: React.FC = () => {
       const sortedRows = rows.sort((a, b) => {
         if (reportSubtype === 'customerByCases' || reportSubtype === 'productByCount') {
           return b.quantity - a.quantity;
+        }
+        if (reportSubtype === 'dailyCasesSold') {
+          return a.saleDate.localeCompare(b.saleDate);
         }
         if (reportSubtype === 'orderByCustomerDate') {
           return a.customerName.localeCompare(b.customerName) || a.saleDate.localeCompare(b.saleDate);
@@ -293,7 +326,7 @@ export const ReportsAggregationPage: React.FC = () => {
         <div className="space-y-6">
           <div className="rounded-2xl bg-gradient-to-r from-primary to-secondary p-5 text-white">
             <h2 className="text-2xl font-semibold">Sales Aggregation</h2>
-            <p className="mt-1 text-sm opacity-90">Choose one of the four sales reports and export the results.</p>
+            <p className="mt-1 text-sm opacity-90">Choose a sales report and export the results.</p>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-4">

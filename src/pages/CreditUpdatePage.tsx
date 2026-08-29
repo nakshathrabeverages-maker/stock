@@ -1,10 +1,146 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Layout, Card, Button, Input, Select, Alert } from '@/components';
+import { Layout, Card, Button, Input, Select, Alert, Modal } from '@/components';
 import { customerService } from '@/services/customerService';
 import { productService } from '@/services/productService';
 import { salesService } from '@/services/salesService';
+import { importService } from '@/services/importService';
 import { Customer, Product, SaleEntry } from '@/types';
 import { parseDateInput } from '@/utils/dateUtils';
+
+const normalizeValue = (value: string | undefined | null) =>
+  (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+const asNumber = (value: string | number | undefined | null): number | undefined => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+
+  const cleaned = String(value)
+    .trim()
+    .replace(/₹/g, '')
+    .replace(/,/g, '')
+    .replace(/\s+/g, '');
+
+  if (!cleaned) return undefined;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : undefined;
+};
+
+const parseCsvLine = (line: string) => {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current.trim());
+  return values;
+};
+
+const parseCreditUpdateCsv = (text: string) => {
+  if (!text || !text.trim()) return [];
+
+  const rows = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (rows.length < 2) return [];
+
+  const headers = parseCsvLine(rows[0]).map((header) =>
+    header
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '')
+  );
+
+  const normalizedHeaders = new Map<string, string>();
+  headers.forEach((header, index) => {
+    const aliasMap: Record<string, string> = {
+      customer: 'customerName',
+      cust: 'customerName',
+      customername: 'customerName',
+      date: 'date',
+      credit: 'creditAmount',
+      creditamount: 'creditAmount',
+      received: 'receivedAmount',
+      recived: 'receivedAmount',
+      receivedamount: 'receivedAmount',
+      balance: 'balanceAmount',
+      balanceamount: 'balanceAmount',
+      product: 'productName',
+      productname: 'productName',
+      qty: 'quantity',
+      quantity: 'quantity',
+      total: 'totalAmount',
+      totalamount: 'totalAmount',
+      paid: 'paidAmount',
+      paidamount: 'paidAmount',
+      remaining: 'remainingAmount',
+      remainingamount: 'remainingAmount',
+    };
+
+    normalizedHeaders.set(header, aliasMap[header] ?? header);
+  });
+
+  const parsedRows: any[] = [];
+
+  for (let i = 1; i < rows.length; i += 1) {
+    const values = parseCsvLine(rows[i]);
+    if (values.every((value) => !value.trim())) continue;
+
+    const row: Record<string, any> = {};
+    for (let j = 0; j < headers.length; j += 1) {
+      const key = normalizedHeaders.get(headers[j]) ?? headers[j];
+      row[key] = values[j] ?? '';
+    }
+
+    const valueMap = Object.entries(row).reduce((acc, [key, value]) => {
+      acc[key] = value;
+      return acc;
+    }, {} as Record<string, any>);
+
+    const customerName = String(valueMap.customerName ?? valueMap.cust ?? '').trim();
+    const date = String(valueMap.date ?? '').trim();
+    const creditAmount = asNumber(valueMap.creditAmount ?? valueMap.credit ?? valueMap.creditamount);
+    const receivedAmount = asNumber(valueMap.receivedAmount ?? valueMap.recived ?? valueMap.received ?? valueMap.receivedamount);
+    const balanceAmount = asNumber(valueMap.balanceAmount ?? valueMap.balance ?? valueMap.balanceamount);
+    const productName = String(valueMap.productName ?? valueMap.product ?? '').trim();
+    const totalAmount = asNumber(valueMap.totalAmount ?? valueMap.total ?? valueMap.totalamount);
+    const quantity = asNumber(valueMap.quantity ?? valueMap.qty);
+    const paidAmount = asNumber(valueMap.paidAmount ?? valueMap.paid ?? valueMap.paidamount);
+    const remainingAmount = asNumber(valueMap.remainingAmount ?? valueMap.remaining ?? valueMap.remainingamount);
+
+    parsedRows.push({
+      customerName,
+      date,
+      creditAmount,
+      receivedAmount,
+      balanceAmount,
+      productName,
+      totalAmount,
+      quantity,
+      paidAmount,
+      remainingAmount,
+    });
+  }
+
+  return parsedRows;
+};
 
 export const CreditUpdatePage: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -19,6 +155,11 @@ export const CreditUpdatePage: React.FC = () => {
   const [success, setSuccess] = useState('');
   const [importCsvText, setImportCsvText] = useState('');
   const [importFileName, setImportFileName] = useState('');
+  const [parsedPreviewRows, setParsedPreviewRows] = useState<any[] | null>(null);
+  const [parsePreviewError, setParsePreviewError] = useState('');
+  const [isImportIssueModalOpen, setIsImportIssueModalOpen] = useState(false);
+  const [importIssues, setImportIssues] = useState<Array<{ rowNumber: number; message: string; customerName: string }>>([]);
+  const [pendingValidRows, setPendingValidRows] = useState<any[]>([]);
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -50,11 +191,13 @@ export const CreditUpdatePage: React.FC = () => {
       const start = new Date(startDate);
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
+
       const sales = await salesService.getAll({ startDate: start, endDate: end });
-      const creditSales = sales
+      const filtered = sales
         .filter((entry) => entry.customerId === selectedCustomerId && (entry.remainingAmount ?? 0) > 0)
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-      setCreditRecords(creditSales);
+
+      setCreditRecords(filtered);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load credit records');
     } finally {
@@ -66,8 +209,24 @@ export const CreditUpdatePage: React.FC = () => {
     if (selectedCustomerId) {
       fetchRecords();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCustomerId, startDate, endDate]);
+
+  useEffect(() => {
+    if (!importCsvText.trim()) {
+      setParsedPreviewRows(null);
+      setParsePreviewError('');
+      return;
+    }
+
+    try {
+      const parsed = parseCreditUpdateCsv(importCsvText);
+      setParsedPreviewRows(parsed);
+      setParsePreviewError('');
+    } catch (e) {
+      setParsedPreviewRows(null);
+      setParsePreviewError(e instanceof Error ? e.message : 'Invalid CSV');
+    }
+  }, [importCsvText]);
 
   const totalOutstanding = useMemo(
     () => creditRecords.reduce((sum, record) => sum + (record.remainingAmount ?? 0), 0),
@@ -75,21 +234,14 @@ export const CreditUpdatePage: React.FC = () => {
   );
 
   const handleAdjustCredit = async () => {
-    const amount = Number(updateAmount);
     if (!selectedCustomerId) {
-      setError('Please select a customer.');
+      setError('Please select a customer first.');
       return;
     }
-    if (!Number.isFinite(amount) || amount === 0) {
-      setError('Enter a valid non-zero adjustment amount.');
-      return;
-    }
-    if (!creditRecords.length) {
-      setError(
-        amount > 0
-          ? 'No credit records available for this customer in the selected date range.'
-          : 'No credit records are available to increase outstanding balance for this customer in the selected date range.'
-      );
+
+    const parsedAmount = Number(updateAmount);
+    if (!Number.isFinite(parsedAmount)) {
+      setError('Please enter a valid adjustment amount.');
       return;
     }
 
@@ -97,463 +249,329 @@ export const CreditUpdatePage: React.FC = () => {
       setLoading(true);
       setError('');
       setSuccess('');
-      let remainingAdjustment = amount;
-      for (const record of creditRecords) {
-        if (remainingAdjustment === 0) break;
-        const currentRemaining = record.remainingAmount ?? 0;
-        if (currentRemaining < 0) continue;
 
-        const totalPrice = record.totalPrice ?? record.quantity * record.pricePerCase;
-        if (amount > 0) {
-          const applyAmount = Math.min(currentRemaining, remainingAdjustment);
-          if (applyAmount <= 0) continue;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
 
-          const newRemaining = currentRemaining - applyAmount;
-          const newPaidAmount = totalPrice - newRemaining;
-          const paymentStatus = newRemaining <= 0 ? 'done' : 'pending';
+      const sales = await salesService.getAll({ startDate: start, endDate: end });
+      const matchingSales = sales.filter((entry) => entry.customerId === selectedCustomerId && (entry.remainingAmount ?? 0) > 0);
 
-          await salesService.update(record.id, {
-            remainingAmount: newRemaining,
-            paidAmount: newPaidAmount,
-            paymentStatus,
-          });
-
-          remainingAdjustment -= applyAmount;
-        } else {
-          const increaseAmount = Math.min(Math.abs(remainingAdjustment), Math.max(totalPrice - currentRemaining, 0));
-          if (increaseAmount <= 0) continue;
-
-          const newRemaining = currentRemaining + increaseAmount;
-          const newPaidAmount = totalPrice - newRemaining;
-          const paymentStatus = newRemaining === 0 ? 'done' : 'pending';
-
-          await salesService.update(record.id, {
-            remainingAmount: newRemaining,
-            paidAmount: newPaidAmount,
-            paymentStatus,
-          });
-
-          remainingAdjustment += increaseAmount;
-        }
+      if (!matchingSales.length) {
+        setError('No outstanding credit sales were found for this customer in the selected period.');
+        return;
       }
 
+      const updates: Array<{ id: string; data: Partial<SaleEntry> }> = matchingSales
+        .slice()
+        .sort((a, b) => (a.remainingAmount ?? 0) - (b.remainingAmount ?? 0))
+        .map((sale) => {
+          const currentRemaining = sale.remainingAmount ?? 0;
+          const total = sale.totalPrice ?? sale.quantity * sale.pricePerCase;
+          const delta = Math.min(Math.abs(parsedAmount), currentRemaining);
+          const newPaid = parsedAmount >= 0 ? (sale.paidAmount ?? 0) + delta : (sale.paidAmount ?? 0) - delta;
+          const safePaid = Math.min(Math.max(newPaid, 0), total);
+          const safeRemaining = Math.max(total - safePaid, 0);
+          const paymentStatus: 'pending' | 'done' = safeRemaining <= 0 ? 'done' : 'pending';
+
+          return {
+            id: sale.id,
+            data: {
+              paidAmount: safePaid,
+              remainingAmount: safeRemaining,
+              paymentStatus,
+            },
+          };
+        });
+
+      await salesService.batchUpdateSales(updates);
       await fetchRecords();
-      setSuccess(`Applied ₹${amount.toFixed(2)} across credit records.`);
+      setSuccess(`Adjusted ${matchesPlurals(matchingSales.length, 'record')} by ₹${Math.abs(parsedAmount).toFixed(2)}.`);
       setUpdateAmount('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update credit records');
+      setError(err instanceof Error ? err.message : 'Failed to apply adjustment');
     } finally {
       setLoading(false);
     }
   };
 
-  const parseCsvRows = (text: string) => {
-    const rows: string[][] = [];
-    let currentRow: string[] = [];
-    let currentValue = '';
-    let inQuotes = false;
-
-    for (let index = 0; index < text.length; index += 1) {
-      const char = text[index];
-
-      if (char === '"') {
-        if (inQuotes && text[index + 1] === '"') {
-          currentValue += '"';
-          index += 1;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === ',' && !inQuotes) {
-        currentRow.push(currentValue);
-        currentValue = '';
-      } else if ((char === '\n' || char === '\r') && !inQuotes) {
-        if (char === '\r' && text[index + 1] === '\n') {
-          index += 1;
-        }
-        currentRow.push(currentValue);
-        if (currentRow.some((cell) => cell.trim())) {
-          rows.push(currentRow);
-        }
-        currentRow = [];
-        currentValue = '';
-      } else {
-        currentValue += char;
-      }
-    }
-
-    if (currentValue.length > 0 || currentRow.length > 0) {
-      currentRow.push(currentValue);
-      if (currentRow.some((cell) => cell.trim())) {
-        rows.push(currentRow);
-      }
-    }
-
-    return rows;
-  };
-
-  const parseCreditUpdateCsv = (text: string) => {
-    const trimmedText = text.trim();
-    if (!trimmedText) {
-      throw new Error('Please select a CSV file to upload.');
-    }
-
-    const rows = parseCsvRows(trimmedText);
-    if (rows.length < 2) {
-      throw new Error('CSV must include a header row and at least one data row.');
-    }
-
-    const [headers, ...dataRows] = rows;
-    const normalizedHeaders = headers.map((header) => header.trim().toLowerCase().replace(/[^a-z0-9]+/g, ''));
-
-    return dataRows
-      .filter((row) => row.some((cell) => cell.trim()))
-      .map((row) => {
-        const record: Record<string, string> = {};
-        normalizedHeaders.forEach((header, index) => {
-          record[header] = row[index] ?? '';
-        });
-
-        const pickValue = (...keys: string[]) => {
-          for (const key of keys) {
-            const value = record[key];
-            if (value !== undefined && String(value).trim() !== '') {
-              return String(value).trim();
-            }
-          }
-          return '';
-        };
-
-        const parseNumber = (val: string) => {
-          if (!val) return NaN;
-          const n = Number(String(val).replace(/[^0-9.-]+/g, ''));
-          return Number.isFinite(n) ? n : NaN;
-        };
-
-        return {
-          customerName: pickValue('customer', 'customername', 'party', 'partyname', 'name'),
-          date: pickValue('date', 'transactiondate', 'paiddate'),
-          productName: pickValue('product', 'productname', 'item', 'itemname', 'name'),
-          quantity: parseNumber(pickValue('quantity', 'qty', 'quantity')),
-          totalAmount: parseNumber(pickValue('total', 'totalamount', 'invoiceamount', 'amount')),
-          paidAmount: parseNumber(pickValue('paid', 'paidamount', 'received', 'receivedamount')),
-          remainingAmount: parseNumber(pickValue('balance', 'balanceamount', 'remaining', 'remainingamount', 'balance_amount')),
-          creditAmount: parseNumber(pickValue('credit', 'creditamount', 'credit_amount')),
-          receivedAmount: parseNumber(pickValue('received', 'receivedamount', 'received_amount')),
-          balanceAmount: parseNumber(pickValue('balance', 'balanceamount', 'balance_amount')),
-        };
-      });
-  };
-
-  const handleCsvFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setError('');
-    setSuccess('');
+  const handleCsvFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
-      setImportCsvText('');
-      setImportFileName('');
       return;
     }
 
-    setImportFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImportCsvText(reader.result as string);
-    };
-    reader.onerror = () => {
-      setError('Failed to read CSV file.');
-    };
-    reader.readAsText(file);
+    try {
+      const text = await file.text();
+      setImportFileName(file.name);
+      setImportCsvText(text);
+    } catch {
+      setError('Failed to read the selected CSV file.');
+    }
   };
 
-  const normalizeValue = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+  const validateCsvRowsForImport = async (rows: any[]) => {
+    const validRows: any[] = [];
+    const issues: Array<{ rowNumber: number; message: string; customerName: string }> = [];
 
-  const handleApplyCsvUpdates = async () => {
-    if (!importCsvText) {
-      setError('Please upload a CSV file first.');
-      return;
-    }
-
-    let parsedRows;
-    try {
-      parsedRows = parseCreditUpdateCsv(importCsvText);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid CSV format.');
-      return;
-    }
-
-    if (!parsedRows.length) {
-      setError('No valid rows were found in the uploaded CSV.');
-      return;
-    }
-
-    const perSaleBatch: Array<{
-      rowIndex: number;
-      customerId: string;
-      customerName: string;
-      date: Date;
-      productName: string;
-      quantity?: number;
-      totalAmount?: number;
-      paidAmount?: number;
-      remainingAmount?: number;
-      sales: SaleEntry[];
-    }> = [];
-
-    const perCustomerBatch: Array<{
-      rowIndex: number;
-      customerId: string;
-      customerName: string;
-      date: Date;
-      amount: number;
-      sales: SaleEntry[];
-    }> = [];
-    const validationErrors: string[] = [];
-
-    for (const [rowIndex, row] of parsedRows.entries()) {
-      const customerName = normalizeValue(row.customerName);
-      if (!customerName) {
-        validationErrors.push(`Row ${rowIndex + 2}: missing customer name.`);
-        continue;
-      }
-
+    for (const [index, row] of rows.entries()) {
+      const rowNumber = index + 2;
       const customer = customers.find(
-        (cust) => normalizeValue(cust.name) === customerName || normalizeValue(cust.firmName) === customerName
+        (entry) =>
+          normalizeValue(entry.name) === normalizeValue(row.customerName) ||
+          normalizeValue(entry.firmName) === normalizeValue(row.customerName)
       );
+
       if (!customer) {
-        validationErrors.push(`Row ${rowIndex + 2}: customer '${row.customerName}' not found.`);
+        issues.push({
+          rowNumber,
+          customerName: row.customerName || 'Unknown customer',
+          message: `customer '${row.customerName || ''}' not found.`,
+        });
         continue;
       }
 
-      const creditAmount = Number.isFinite(row.creditAmount) ? row.creditAmount : NaN;
-      const receivedAmount = Number.isFinite(row.receivedAmount) ? row.receivedAmount : NaN;
-      const balanceAmount = Number.isFinite(row.balanceAmount) ? row.balanceAmount : NaN;
-
-      if (Number.isNaN(balanceAmount) && (Number.isNaN(creditAmount) || Number.isNaN(receivedAmount))) {
-        validationErrors.push(`Row ${rowIndex + 2}: provide either 'balance' or both 'credit' and 'received' amounts.`);
+      const rowDate = row.date ? parseDateInput(row.date) : null;
+      if (!rowDate || Number.isNaN(rowDate.getTime())) {
+        issues.push({
+          rowNumber,
+          customerName: customer.name,
+          message: `invalid date '${row.date || ''}'.`,
+        });
         continue;
       }
 
-      const parsedDate = row.date ? parseDateInput(row.date) : null;
-      if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
-        validationErrors.push(`Row ${rowIndex + 2}: invalid or missing date '${row.date || ''}'.`);
+      const startOfDay = new Date(rowDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(rowDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const salesForDay = await salesService.getAll({ startDate: startOfDay, endDate: endOfDay });
+      const customerSales = salesForDay.filter((sale) => sale.customerId === customer.id);
+
+      if (!customerSales.length) {
+        issues.push({
+          rowNumber,
+          customerName: customer.name,
+          message: `no sale records found for ${customer.name} on ${row.date}.`,
+        });
         continue;
       }
 
-      // search sales for that day
-      const dayStart = new Date(parsedDate);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(parsedDate);
-      dayEnd.setHours(23, 59, 59, 999);
+      const credit = asNumber(row.creditAmount);
+      const received = asNumber(row.receivedAmount);
+      const balance = asNumber(row.balanceAmount);
+      const daySalesTotal = customerSales.reduce((sum, sale) => sum + (sale.totalPrice ?? sale.quantity * sale.pricePerCase), 0);
 
-      const salesForDay = await salesService.getAll({ startDate: dayStart, endDate: dayEnd });
-      const matchedSales = salesForDay
-        .filter((entry) => entry.customerId === customer.id && entry.date && new Date(entry.date).getTime() >= dayStart.getTime() && new Date(entry.date).getTime() <= dayEnd.getTime())
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-      if (!matchedSales.length) {
-        validationErrors.push(`Row ${rowIndex + 2}: no sale records found for ${row.customerName} on ${row.date}.`);
+      if (!Number.isFinite(credit) || credit! < 0) {
+        issues.push({ rowNumber, customerName: customer.name, message: 'CSV credit amount is invalid.' });
         continue;
       }
 
-      // If CSV provided 'credit' amount, ensure it matches the sum of sales totalPrice for that date
-      const salesTotal = matchedSales.reduce((s, r) => s + (r.totalPrice ?? (r.quantity * r.pricePerCase || 0)), 0);
-      const creditAmountProvided = Number.isFinite(row.creditAmount) ? row.creditAmount : NaN;
-      if (!Number.isNaN(creditAmountProvided)) {
-        // allow small rounding tolerance
-        if (Math.abs(creditAmountProvided - salesTotal) > 0.5) {
-          validationErrors.push(
-            `Row ${rowIndex + 2}: CSV credit amount ₹${creditAmountProvided.toFixed(2)} does not match total sale amount ₹${salesTotal.toFixed(2)} for that date.`
-          );
-          continue;
+      if (Math.abs(credit! - daySalesTotal) > 0.5) {
+        issues.push({
+          rowNumber,
+          customerName: customer.name,
+          message: `CSV credit amount ₹${credit!.toFixed(2)} does not match the total sales amount ₹${daySalesTotal.toFixed(2)} for this customer/date.`,
+        });
+        continue;
+      }
+
+      if (!Number.isFinite(received) || received! < 0) {
+        issues.push({ rowNumber, customerName: customer.name, message: 'CSV received amount is invalid.' });
+        continue;
+      }
+
+      if (received! > credit! + 0.01) {
+        issues.push({
+          rowNumber,
+          customerName: customer.name,
+          message: `received amount ₹${received!.toFixed(2)} cannot be greater than credit amount ₹${credit!.toFixed(2)}.`,
+        });
+        continue;
+      }
+
+      if (Number.isFinite(balance) && Math.abs((credit! - received!) - balance!) > 0.5) {
+        issues.push({
+          rowNumber,
+          customerName: customer.name,
+          message: `CSV balance ₹${(balance ?? 0).toFixed(2)} does not match credit minus received ₹${(credit! - received!).toFixed(2)}.`,
+        });
+        continue;
+      }
+
+      validRows.push({ ...row, customer, customerId: customer.id, rowDate, rowNumber, customerSales, credit, received, balance });
+    }
+
+    return { validRows, issues };
+  };
+
+  const applyValidatedRows = async (rows: any[]) => {
+    const updates: Array<{ id: string; data: Partial<SaleEntry> }> = [];
+    const importRecords: Array<{ key: string; payload: any }> = [];
+
+    for (const row of rows) {
+      const { customer, rowDate, customerSales, credit, received, balance } = row;
+      const amountToApply = received!;
+
+      if (amountToApply <= 0) {
+        for (const sale of customerSales) {
+          const total = sale.totalPrice ?? sale.quantity * sale.pricePerCase;
+          updates.push({
+            id: sale.id,
+            data: {
+              paidAmount: 0,
+              remainingAmount: total,
+              paymentStatus: 'pending',
+            } as Partial<SaleEntry>,
+          });
+        }
+      } else {
+        let remainingToApply = amountToApply;
+        const sortedSales = customerSales
+          .slice()
+          .sort((a, b) => (a.totalPrice ?? a.quantity * a.pricePerCase) - (b.totalPrice ?? b.quantity * b.pricePerCase));
+
+        for (const sale of sortedSales) {
+          if (remainingToApply <= 0) {
+            const total = sale.totalPrice ?? sale.quantity * sale.pricePerCase;
+            updates.push({
+              id: sale.id,
+              data: {
+                paidAmount: 0,
+                remainingAmount: total,
+                paymentStatus: 'pending',
+              } as Partial<SaleEntry>,
+            });
+            continue;
+          }
+
+          const total = sale.totalPrice ?? sale.quantity * sale.pricePerCase;
+          const allocated = Math.min(remainingToApply, total);
+          const updatedPaid = allocated;
+          const updatedRemaining = Math.max(total - updatedPaid, 0);
+
+          updates.push({
+            id: sale.id,
+            data: {
+              paidAmount: updatedPaid,
+              remainingAmount: updatedRemaining,
+              paymentStatus: updatedRemaining <= 0 ? 'done' : 'pending',
+            } as Partial<SaleEntry>,
+          });
+
+          remainingToApply -= allocated;
+        }
+
+        const totalAllocated = updates
+          .filter((up) => customerSales.some((sale) => sale.id === up.id))
+          .reduce((sum, up) => sum + ((up.data.paidAmount ?? 0) as number), 0);
+
+        if (Math.abs(totalAllocated - amountToApply) > 0.5) {
+          throw new Error(`Row ${row.rowNumber}: received amount ₹${amountToApply.toFixed(2)} could not be fully allocated across the matching sales.`);
         }
       }
 
-      // If CSV row contains productName or remainingAmount, treat as per-sale update
-      const hasPerSale = String(row.productName ?? '').trim() !== '' || Number.isFinite(row.remainingAmount);
-      if (hasPerSale) {
-        perSaleBatch.push({
-          rowIndex,
-          customerId: customer.id,
-          customerName: row.customerName,
-          date: parsedDate,
-          productName: row.productName,
-          quantity: Number.isFinite(row.quantity) ? row.quantity : undefined,
-          totalAmount: Number.isFinite(row.totalAmount) ? row.totalAmount : undefined,
-          paidAmount: Number.isFinite(row.paidAmount) ? row.paidAmount : undefined,
-          remainingAmount: Number.isFinite(row.remainingAmount) ? row.remainingAmount : undefined,
-          sales: matchedSales,
-        });
-      } else {
-        const desiredBalance = !Number.isNaN(balanceAmount) ? balanceAmount : creditAmount - receivedAmount;
-        perCustomerBatch.push({
-          rowIndex,
-          customerId: customer.id,
-          customerName: row.customerName,
-          date: parsedDate,
-          amount: desiredBalance,
-          sales: matchedSales,
-        });
+      const importKey = `${customer.id}_${rowDate.toISOString().slice(0, 10)}_${amountToApply.toFixed(2)}_${(balance ?? (credit! - received!)).toFixed(2)}`;
+      const exists = await importService.exists(importKey);
+      if (exists) {
+        throw new Error(`Row ${row.rowNumber}: this payment import already exists.`);
       }
+
+      importRecords.push({
+        key: importKey,
+        payload: {
+          customerId: customer.id,
+          customerName: customer.name,
+          date: rowDate.toISOString(),
+          receivedAmount: received ?? 0,
+          balanceAmount: balance ?? 0,
+          creditAmount: credit ?? 0,
+        },
+      });
     }
 
-    if (validationErrors.length) {
-      setError(validationErrors.join(' '));
-      return;
+    if (updates.length > 0) {
+      await salesService.batchUpdateSales(updates);
     }
 
-    if (!perSaleBatch.length && !perCustomerBatch.length) {
-      setError('No valid CSV rows were found to apply.');
+    for (const record of importRecords) {
+      await importService.create(record.key, record.payload);
+    }
+
+    return updates.length;
+  };
+
+  const handleApplyCsvUpdates = async () => {
+    if (!importCsvText.trim()) {
+      setError('Please upload or paste a CSV file first.');
       return;
     }
 
     try {
+      const parsedRows = parseCreditUpdateCsv(importCsvText);
+      if (!parsedRows.length) {
+        setError('No valid rows were found in the CSV.');
+        return;
+      }
+
       setLoading(true);
       setError('');
       setSuccess('');
 
+      const { validRows, issues } = await validateCsvRowsForImport(parsedRows);
 
-      let totalApplied = 0;
-      let rowCount = 0;
-
-      // First process per-sale exact updates
-      for (const batch of perSaleBatch) {
-        rowCount += 1;
-        // match specific sale by product if possible
-        let matchedSale: SaleEntry | undefined;
-        if (batch.productName) {
-          const normalizedProduct = String(batch.productName).toLowerCase().replace(/[^a-z0-9]+/g, '');
-          matchedSale = batch.sales.find((s) => {
-            const prod = products.find((p) => p.id === s.productId);
-            const prodName = (prod?.name || s.productId || '').toString().toLowerCase();
-            const norm = prodName.replace(/[^a-z0-9]+/g, '');
-            return norm.includes(normalizedProduct) || normalizedProduct.includes(norm);
-          });
-        }
-        // if no product match, but only one sale exists, use it
-        if (!matchedSale && batch.sales.length === 1) matchedSale = batch.sales[0];
-
-        if (!matchedSale) {
-          throw new Error(`Row ${batch.rowIndex + 2}: could not match sale by product for ${batch.customerName} on ${batch.date.toISOString().slice(0,10)}.`);
-        }
-
-        const totalPrice = matchedSale.totalPrice ?? matchedSale.quantity * matchedSale.pricePerCase;
-        // If CSV provides paidAmount, honor it and compute remaining; otherwise use remainingAmount if provided
-        let desiredRemainingNum = NaN;
-        let finalPaidAmount: number | undefined;
-        if (Number.isFinite(batch.paidAmount)) {
-          finalPaidAmount = batch.paidAmount as number;
-          desiredRemainingNum = totalPrice - finalPaidAmount;
-        } else if (Number.isFinite(batch.remainingAmount)) {
-          desiredRemainingNum = batch.remainingAmount as number;
-          finalPaidAmount = totalPrice - desiredRemainingNum;
-        } else if (Number.isFinite(batch.totalAmount) && Number.isFinite(batch.paidAmount)) {
-          // handled above, but keep for completeness
-          finalPaidAmount = batch.paidAmount as number;
-          desiredRemainingNum = totalPrice - finalPaidAmount;
-        }
-
-        if (!Number.isFinite(desiredRemainingNum) || !Number.isFinite(finalPaidAmount)) {
-          throw new Error(`Row ${batch.rowIndex + 2}: missing remaining/total/paid information for per-sale update.`);
-        }
-
-        const paid = finalPaidAmount as number;
-        if (paid < -0.5 || paid > totalPrice + 0.5) {
-          throw new Error(`Row ${batch.rowIndex + 2}: provided paid amount ₹${paid.toFixed(2)} is invalid for sale total ₹${totalPrice.toFixed(2)}.`);
-        }
-
-        const newRemaining = Math.max(Math.round(desiredRemainingNum * 100) / 100, 0);
-        const normalizedRemaining = newRemaining < 10 ? 0 : newRemaining;
-        const newPaidAmount = Math.max(Math.round(paid * 100) / 100, 0);
-        const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
-
-        await salesService.update(matchedSale.id, {
-          remainingAmount: normalizedRemaining,
-          paidAmount: newPaidAmount,
-          paymentStatus,
-        });
-
-        totalApplied += Math.abs((matchedSale.remainingAmount ?? 0) - normalizedRemaining);
+      if (issues.length > 0) {
+        setImportIssues(issues);
+        setPendingValidRows(validRows);
+        setIsImportIssueModalOpen(true);
+        setLoading(false);
+        return;
       }
 
-      // Then process per-customer aggregated rows (unchanged logic)
-      for (const batch of perCustomerBatch) {
-        rowCount += 1;
-        const sales = batch.sales;
-
-        const currentTotalRemaining = sales.reduce((s, r) => s + (r.remainingAmount ?? 0), 0);
-        let desiredTotalRemaining = Number.isFinite(batch.amount) && batch.amount >= 0 ? batch.amount : 0;
-
-        // compute total capacity (sum of totalPrice) to validate increases
-        const totalCapacity = sales.reduce((s, r) => s + (r.totalPrice ?? (r.quantity * r.pricePerCase || 0)), 0);
-        if (desiredTotalRemaining > totalCapacity) {
-          throw new Error(`Row ${batch.rowIndex + 2}: desired amount ${desiredTotalRemaining} exceeds total possible outstanding (${totalCapacity.toFixed(2)}) for that date.`);
-        }
-
-        // If we need to reduce outstanding (current > desired), apply payments across sales oldest-first
-        let diff = currentTotalRemaining - desiredTotalRemaining;
-        if (diff > 0) {
-          for (const record of sales) {
-            if (diff <= 0) break;
-            const currentRemaining = record.remainingAmount ?? 0;
-            if (currentRemaining <= 0) continue;
-            const applyAmount = Math.min(currentRemaining, diff);
-            const totalPrice = record.totalPrice ?? record.quantity * record.pricePerCase;
-            const newRemainingRaw = currentRemaining - applyAmount;
-            const newRemaining = Math.max(Math.round(newRemainingRaw * 100) / 100, 0);
-            const normalizedRemaining = newRemaining < 10 ? 0 : newRemaining;
-            const newPaidAmount = Math.max(Math.round((totalPrice - normalizedRemaining) * 100) / 100, 0);
-            const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
-
-            await salesService.update(record.id, {
-              remainingAmount: normalizedRemaining,
-              paidAmount: newPaidAmount,
-              paymentStatus,
-            });
-
-            diff -= applyAmount;
-            totalApplied += applyAmount;
-          }
-        } else if (diff < 0) {
-          // need to increase outstanding by |diff|, distribute across sales up to their capacity
-          let needed = Math.abs(diff);
-          for (const record of sales) {
-            if (needed <= 0) break;
-            const currentRemaining = record.remainingAmount ?? 0;
-            const totalPrice = record.totalPrice ?? record.quantity * record.pricePerCase;
-            const capacity = Math.max(totalPrice - currentRemaining, 0);
-            if (capacity <= 0) continue;
-            const addAmount = Math.min(capacity, needed);
-            const newRemainingRaw = currentRemaining + addAmount;
-            const newRemaining = Math.max(Math.round(newRemainingRaw * 100) / 100, 0);
-            const normalizedRemaining = newRemaining < 10 ? 0 : newRemaining;
-            const newPaidAmount = Math.max(Math.round((totalPrice - normalizedRemaining) * 100) / 100, 0);
-            const paymentStatus = normalizedRemaining === 0 ? 'done' : 'pending';
-
-            await salesService.update(record.id, {
-              remainingAmount: normalizedRemaining,
-              paidAmount: newPaidAmount,
-              paymentStatus,
-            });
-
-            needed -= addAmount;
-            totalApplied += addAmount;
-          }
-          if (needed > 0) {
-            throw new Error(`Row ${batch.rowIndex + 2}: unable to increase outstanding by ${Math.abs(diff)}; not enough capacity on sales for that date.`);
-          }
-        }
-      }
-
+      const appliedCount = await applyValidatedRows(validRows);
       await fetchRecords();
-      setSuccess(`Processed ${rowCount} CSV rows. Total applied ₹${totalApplied.toFixed(2)}.`);
+      setSuccess(`Applied ${appliedCount} sale updates from the CSV.`);
       setImportCsvText('');
       setImportFileName('');
+      setParsedPreviewRows(null);
+      setParsePreviewError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to apply CSV credit updates');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleContinueAfterIssues = async () => {
+    if (pendingValidRows.length === 0) {
+      setImportIssues([]);
+      setPendingValidRows([]);
+      setIsImportIssueModalOpen(false);
+      setError('No valid rows are available to continue. Please correct the CSV and try again.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setIsImportIssueModalOpen(false);
+      const appliedCount = await applyValidatedRows(pendingValidRows);
+      await fetchRecords();
+      setSuccess(`Skipped the invalid rows and applied ${appliedCount} valid record updates.`);
+      setImportCsvText('');
+      setImportFileName('');
+      setParsedPreviewRows(null);
+      setParsePreviewError('');
+      setImportIssues([]);
+      setPendingValidRows([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to apply the valid CSV rows after skipping invalid entries.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const matchesPlurals = (count: number, singular: string) => `${count} ${count === 1 ? singular : `${singular}s`}`;
 
   return (
     <Layout title="Credit Update" subtitle="Adjust outstanding credit records by customer and date range">
@@ -609,6 +627,56 @@ export const CreditUpdatePage: React.FC = () => {
         </div>
       </Card>
 
+      <Modal
+        isOpen={isImportIssueModalOpen}
+        onClose={() => {
+          setIsImportIssueModalOpen(false);
+          setImportIssues([]);
+          setPendingValidRows([]);
+        }}
+        title="CSV validation issues"
+        size="lg"
+        footer={
+          <div className="flex flex-col sm:flex-row gap-3 justify-end">
+            <Button variant="secondary" onClick={() => {
+              setIsImportIssueModalOpen(false);
+              setImportIssues([]);
+              setPendingValidRows([]);
+            }}>
+              Cancel
+            </Button>
+            <Button variant="secondary" onClick={() => {
+              setIsImportIssueModalOpen(false);
+            }}>
+              Correct CSV
+            </Button>
+            <Button variant="primary" onClick={handleContinueAfterIssues} loading={loading}>
+              Skip invalid rows & continue
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-700">
+            Some rows in the uploaded CSV do not match the expected customer/date totals. You can skip those records and continue with the valid rows, correct the CSV and try again, or cancel the import.
+          </p>
+
+          <div className="max-h-72 overflow-y-auto rounded border border-gray-200 bg-gray-50 p-3">
+            {importIssues.length > 0 ? (
+              <ul className="space-y-2 text-sm text-gray-700">
+                {importIssues.map((issue) => (
+                  <li key={`${issue.rowNumber}-${issue.customerName}`} className="rounded border border-red-200 bg-white p-2">
+                    <span className="font-medium text-red-700">Row {issue.rowNumber}</span> - {issue.customerName}: {issue.message}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-gray-600">No import issues detected.</p>
+            )}
+          </div>
+        </div>
+      </Modal>
+
       <Card className="mb-6">
         <div className="grid grid-cols-1 gap-4">
           <div>
@@ -623,15 +691,61 @@ export const CreditUpdatePage: React.FC = () => {
               <p className="mt-2 text-sm text-gray-600">Selected file: {importFileName}</p>
             ) : (
               <div className="space-y-1">
-                <p className="mt-2 text-sm text-gray-600">CSV should include customer name, date/startDate, endDate (optional), and amount.</p>
-                <p className="text-sm text-gray-600">Example header: <span className="font-medium">customer,date,amount</span></p>
-                <p className="text-sm text-gray-600">Optional fields: <span className="font-medium">startDate,endDate</span> for a date range.</p>
-                <p className="text-sm text-gray-600">Example row: <span className="font-medium">Ravi Kumar,2026-08-01,,1500</span></p>
+                <p className="mt-2 text-sm text-gray-600">CSV should accept: <span className="font-medium">cust,date,credit amount,recived amount,balance amount</span></p>
+                <p className="text-sm text-gray-600">Example header: <span className="font-medium">cust,date,credit amount,recived amount,balance amount</span></p>
+                <p className="text-sm text-gray-600">Notes: provide either <span className="font-medium">balance</span> or both <span className="font-medium">credit</span> and <span className="font-medium">recived/received</span>.</p>
+                <p className="text-sm text-gray-600">Example row: <span className="font-medium">Ravi Kumar,2026-08-01,1500,0,1500</span></p>
               </div>
             )}
           </div>
-          <div className="flex items-end justify-end">
-            <Button variant="secondary" onClick={handleApplyCsvUpdates} loading={loading}>
+
+          <div className="mt-3">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Or paste CSV content</label>
+            <textarea
+              rows={6}
+              className="w-full rounded border border-gray-300 bg-white px-3 py-2"
+              placeholder={`cust,date,credit amount,recived amount,balance amount\nRavi Kumar,2026-08-01,1500,0,1500`}
+              value={importCsvText}
+              onChange={(e) => setImportCsvText(e.target.value)}
+            />
+          </div>
+
+          {parsePreviewError ? (
+            <p className="mt-2 text-sm text-red-600">Preview parse error: {parsePreviewError}</p>
+          ) : parsedPreviewRows && parsedPreviewRows.length > 0 ? (
+            <div className="mt-4">
+              <p className="text-sm font-medium">Preview ({parsedPreviewRows.length} rows)</p>
+              <div className="overflow-x-auto mt-2">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-right">Credit</th>
+                      <th className="px-3 py-2 text-right">Recived</th>
+                      <th className="px-3 py-2 text-right">Balance</th>
+                      <th className="px-3 py-2 text-left">Product</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {parsedPreviewRows.map((row, index) => (
+                      <tr key={`${row.customerName}-${row.date}-${index}`}>
+                        <td className="px-3 py-2">{row.customerName || ''}</td>
+                        <td className="px-3 py-2">{row.date || ''}</td>
+                        <td className="px-3 py-2 text-right">{Number.isFinite(row.creditAmount) ? row.creditAmount : ''}</td>
+                        <td className="px-3 py-2 text-right">{Number.isFinite(row.receivedAmount) ? row.receivedAmount : ''}</td>
+                        <td className="px-3 py-2 text-right">{Number.isFinite(row.balanceAmount) ? row.balanceAmount : ''}</td>
+                        <td className="px-3 py-2">{row.productName || ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex items-end justify-end mt-3">
+            <Button variant="secondary" onClick={handleApplyCsvUpdates} loading={loading} disabled={!parsedPreviewRows || parsedPreviewRows.length === 0}>
               Apply CSV Updates
             </Button>
           </div>

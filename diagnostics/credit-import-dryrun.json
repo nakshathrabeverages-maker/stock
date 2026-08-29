@@ -1,0 +1,55 @@
+[
+  {
+    "row": 1,
+    "customer": "Sresta Enterprises (Tadepalligudem)",
+    "date": "2026-07-02",
+    "csv": { "credit": 110000, "received": 108900, "balance": 1100 },
+    "matchedSales": [
+      { "product": "B2 WHITE 500 ML", "total": 77000, "paid": 73500, "remaining": 3500 },
+      { "product": "SMART 500 ML", "total": 33000, "paid": 0, "remaining": 33000 }
+    ],
+    "allocationOrder": ["B2 WHITE 500 ML","SMART 500 ML"],
+    "applied": [
+      { "product": "B2 WHITE 500 ML", "applied": 3500, "newPaid": 77000, "newRemaining": 0 },
+      { "product": "SMART 500 ML", "applied": 31900, "newPaid": 31900, "newRemaining": 1100 }
+    ],
+    "totalApplied": 35400,
+    "finalTotalRemaining": 1100,
+    "status": "ok",
+    "notes": "Allocated received ₹108,900 across smallest outstanding first. Final balance matches CSV."
+  },
+  {
+    "row": 2,
+    "customer": "Sresta Enterprises (Tadepalligudem)",
+    "date": "2026-07-20",
+    "csv": { "credit": 33000, "received": 0, "balance": 33000 },
+    "matchedSales": [
+      { "product": "B2 BLUE 500 ML", "total": 33000, "paid": 3900, "remaining": 29100 }
+    ],
+    "allocationOrder": ["B2 BLUE 500 ML"],
+    "applied": [
+      { "product": "B2 BLUE 500 ML", "applied": -3900, "newPaid": 0, "newRemaining": 33000 }
+    ],
+    "totalApplied": -3900,
+    "finalTotalRemaining": 33000,
+    "status": "ok",
+    "notes": "CSV indicates zero received -> reduced paidAmount to 0 (increased remaining)."
+  },
+  {
+    "row": 3,
+    "customer": "Sresta Enterprises (Tadepalligudem)",
+    "date": "2026-07-28",
+    "csv": { "credit": 22000, "received": 0, "balance": 22000 },
+    "matchedSales": [
+      { "product": "ICEBERG BLACK 500 ML", "total": 22000, "paid": 0, "remaining": 22000 }
+    ],
+    "allocationOrder": ["ICEBERG BLACK 500 ML"],
+    "applied": [
+      { "product": "ICEBERG BLACK 500 ML", "applied": 0, "newPaid": 0, "newRemaining": 22000 }
+    ],
+    "totalApplied": 0,
+    "finalTotalRemaining": 22000,
+    "status": "ok",
+    "notes": "No change required."
+  }
+]

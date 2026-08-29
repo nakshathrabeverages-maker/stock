@@ -187,6 +187,35 @@ export const salesService = {
     }
   },
 
+  async batchUpdateSales(updates: Array<{ id: string; data: Partial<SaleEntry> }>) {
+    try {
+      if (!updates.length) return { success: true };
+      const batch = writeBatch(db);
+      const now = Timestamp.now();
+      updates.forEach((u) => {
+        const updateData: any = { ...u.data, updatedAt: now };
+        if (u.data.date) updateData.date = Timestamp.fromDate(u.data.date as any);
+        // compute payment status if paidAmount/totalPrice provided
+        if (u.data.paidAmount !== undefined || u.data.totalPrice !== undefined) {
+          const total = u.data.totalPrice;
+          const paid = u.data.paidAmount;
+          if (total !== undefined && paid !== undefined) {
+            const remaining = Math.max(total - paid, 0);
+            updateData.paidAmount = paid;
+            updateData.remainingAmount = remaining;
+            updateData.paymentStatus = remaining <= 0 ? 'done' : 'pending';
+          }
+        }
+        batch.update(doc(db, COLLECTION, u.id), updateData);
+      });
+      await batch.commit();
+      notifySalesChanged();
+      return { success: true };
+    } catch (error) {
+      throw new Error(`Failed to batch update sales: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  },
+
   async delete(id: string) {
     try {
       const entry = await this.getById(id);
