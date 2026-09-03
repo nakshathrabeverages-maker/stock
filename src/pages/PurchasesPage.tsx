@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Layout, Card, Button, Select, Input, Modal, Alert, Loading } from '@/components';
 import { downloadCsv } from '@/utils/csvUtils';
 import { purchaseService } from '@/services/purchaseService';
@@ -11,6 +11,8 @@ import { PurchaseEntry, RawMaterial, RawMaterialCategory } from '@/types';
 import { RAW_MATERIAL_CATEGORIES } from '@/constants/rawMaterial';
 
 export const PurchasesPage: React.FC = () => {
+  type PurchaseSortKey = 'date' | 'material' | 'category' | 'quantity' | 'price' | 'total' | 'paid' | 'remaining' | 'status' | 'supplier' | 'createdBy';
+
   const [purchases, setPurchases] = useState<PurchaseEntry[]>([]);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [userMap, setUserMap] = useState<Record<string, string>>({});
@@ -18,6 +20,15 @@ export const PurchasesPage: React.FC = () => {
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [searchFilter, setSearchFilter] = useState('');
+  const [materialFilter, setMaterialFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [supplierFilter, setSupplierFilter] = useState('');
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
+  const [sortKey, setSortKey] = useState<PurchaseSortKey>('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const { user } = useAuthStore();
 
   const { lockDate, isLocked: isPageLocked } = usePageLock('purchases');
@@ -58,12 +69,12 @@ export const PurchasesPage: React.FC = () => {
   };
 
   const handleExportPurchases = () => {
-    if (!purchases.length) {
+    if (!filteredPurchases.length) {
       setError('No purchase data available to export.');
       return;
     }
 
-    const rows = purchases.map((purchase) => {
+    const rows = filteredPurchases.map((purchase) => {
       const material = materials.find((m) => m.id === purchase.rawMaterialId);
       return {
         Date: new Date(purchase.date).toLocaleDateString(),
@@ -182,10 +193,90 @@ export const PurchasesPage: React.FC = () => {
     }
   };
 
-  if (loading) return <Loading fullScreen message="Loading purchases..." />;
-
   const filteredMaterials = formData.category ? materials.filter((m) => m.category === formData.category) : materials;
   const materialOptions = filteredMaterials.map((m) => ({ value: m.id, label: `${m.name} (${m.unit})` }));
+
+  const materialFilterOptions = materials.map((material) => ({ value: material.id, label: material.name }));
+  const categoryFilterOptions = RAW_MATERIAL_CATEGORIES;
+  const statusOptions = [
+    { value: 'pending', label: 'Pending' },
+    { value: 'done', label: 'Done' },
+  ];
+  const normalizedSearch = searchFilter.trim().toLowerCase();
+
+  const filteredPurchases = useMemo(() => {
+    const rows = purchases.filter((purchase) => {
+      const material = materials.find((item) => item.id === purchase.rawMaterialId);
+      const materialName = material?.name || 'N/A';
+      const category = material?.category || purchase.category || '';
+      const supplier = purchase.supplier || '';
+      const createdBy = userMap[purchase.createdBy] || purchase.createdBy || '';
+      const purchaseDateValue = new Date(purchase.date).toISOString().slice(0, 10);
+      const matchesSearch = !normalizedSearch || [materialName, category, supplier, createdBy, purchase.paymentStatus]
+        .some((value) => value.toLowerCase().includes(normalizedSearch));
+      const matchesMaterial = !materialFilter || purchase.rawMaterialId === materialFilter;
+      const matchesCategory = !categoryFilter || category === categoryFilter;
+      const matchesStatus = !statusFilter || purchase.paymentStatus === statusFilter;
+      const matchesSupplier = !supplierFilter || supplier.toLowerCase().includes(supplierFilter.trim().toLowerCase());
+      const matchesStartDate = !startDateFilter || purchaseDateValue >= startDateFilter;
+      const matchesEndDate = !endDateFilter || purchaseDateValue <= endDateFilter;
+
+      return matchesSearch && matchesMaterial && matchesCategory && matchesStatus && matchesSupplier && matchesStartDate && matchesEndDate;
+    });
+
+    return rows.sort((first, second) => {
+      const firstMaterial = materials.find((item) => item.id === first.rawMaterialId);
+      const secondMaterial = materials.find((item) => item.id === second.rawMaterialId);
+      const firstTotal = first.price * first.quantity;
+      const secondTotal = second.price * second.quantity;
+      const firstValues: Record<PurchaseSortKey, string | number> = {
+        date: new Date(first.date).getTime(),
+        material: firstMaterial?.name || 'N/A',
+        category: firstMaterial?.category || first.category || '',
+        quantity: first.quantity,
+        price: first.price,
+        total: firstTotal,
+        paid: first.paidAmount,
+        remaining: first.remainingAmount,
+        status: first.paymentStatus,
+        supplier: first.supplier || '',
+        createdBy: userMap[first.createdBy] || first.createdBy || '',
+      };
+      const secondValues: Record<PurchaseSortKey, string | number> = {
+        date: new Date(second.date).getTime(),
+        material: secondMaterial?.name || 'N/A',
+        category: secondMaterial?.category || second.category || '',
+        quantity: second.quantity,
+        price: second.price,
+        total: secondTotal,
+        paid: second.paidAmount,
+        remaining: second.remainingAmount,
+        status: second.paymentStatus,
+        supplier: second.supplier || '',
+        createdBy: userMap[second.createdBy] || second.createdBy || '',
+      };
+      const firstValue = firstValues[sortKey];
+      const secondValue = secondValues[sortKey];
+      const comparison = typeof firstValue === 'number' && typeof secondValue === 'number'
+        ? firstValue - secondValue
+        : String(firstValue).localeCompare(String(secondValue));
+
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+  }, [purchases, materials, userMap, normalizedSearch, materialFilter, categoryFilter, statusFilter, supplierFilter, startDateFilter, endDateFilter, sortKey, sortDirection]);
+
+  const handleSort = (key: PurchaseSortKey) => {
+    if (sortKey === key) {
+      setSortDirection((direction) => direction === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDirection(key === 'date' ? 'desc' : 'asc');
+    }
+  };
+
+  const sortIndicator = (key: PurchaseSortKey) => sortKey === key ? (sortDirection === 'asc' ? ' ↑' : ' ↓') : '';
+
+  if (loading) return <Loading fullScreen message="Loading purchases..." />;
 
   return (
     <Layout title="Purchases" subtitle="Record raw material purchases and update inventory">
@@ -203,27 +294,64 @@ export const PurchasesPage: React.FC = () => {
         />
       )}
 
+      <Card className="mb-6">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <Input label="Search" placeholder="Material, supplier, user..." value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)} />
+          <Select label="Material" placeholder="All materials" options={materialFilterOptions} value={materialFilter} onChange={(e) => setMaterialFilter(e.target.value)} />
+          <Select label="Category" placeholder="All categories" options={categoryFilterOptions} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} />
+          <Select label="Status" placeholder="All statuses" options={statusOptions} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} />
+          <Input label="Supplier" placeholder="Filter supplier" value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)} />
+          <Input label="From date" type="date" value={startDateFilter} onChange={(e) => setStartDateFilter(e.target.value)} />
+          <Input label="To date" type="date" value={endDateFilter} onChange={(e) => setEndDateFilter(e.target.value)} />
+          <div className="flex items-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearchFilter('');
+                setMaterialFilter('');
+                setCategoryFilter('');
+                setStatusFilter('');
+                setSupplierFilter('');
+                setStartDateFilter('');
+                setEndDateFilter('');
+              }}
+            >
+              Clear Filters
+            </Button>
+          </div>
+        </div>
+        <p className="mt-3 text-sm text-gray-500">Showing {filteredPurchases.length} of {purchases.length} purchases. Click a column heading to sort.</p>
+      </Card>
+
       <Card>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Date</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Material</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Category</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Quantity</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Price</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Total</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Paid Amount</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Balance</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Supplier</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Created By</th>
+                {([
+                  ['date', 'Date'],
+                  ['material', 'Material'],
+                  ['category', 'Category'],
+                  ['quantity', 'Quantity'],
+                  ['price', 'Price'],
+                  ['total', 'Total'],
+                  ['paid', 'Paid Amount'],
+                  ['remaining', 'Balance'],
+                  ['status', 'Status'],
+                  ['supplier', 'Supplier'],
+                  ['createdBy', 'Created By'],
+                ] as Array<[PurchaseSortKey, string]>).map(([key, label]) => (
+                  <th key={key} className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" className="whitespace-nowrap hover:text-blue-700" onClick={() => handleSort(key)}>
+                      {label}{sortIndicator(key)}
+                    </button>
+                  </th>
+                ))}
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {purchases.map((p) => {
+              {filteredPurchases.map((p) => {
                 const material = materials.find((m) => m.id === p.rawMaterialId);
                 const totalPrice = p.price * p.quantity;
                 return (

@@ -77,13 +77,20 @@ const parseCreditUpdateCsv = (text: string) => {
       date: 'date',
       credit: 'creditAmount',
       creditamount: 'creditAmount',
+      sales: 'salesAmount',
+      saleamount: 'salesAmount',
+      totalsales: 'salesAmount',
+      totalsalesamount: 'salesAmount',
+      salesamountinr: 'salesAmount',
       received: 'receivedAmount',
       recived: 'receivedAmount',
+      recivedamount: 'receivedAmount',
       receivedamount: 'receivedAmount',
       balance: 'balanceAmount',
       balanceamount: 'balanceAmount',
       product: 'productName',
       productname: 'productName',
+      salesamount: 'salesAmount',
       qty: 'quantity',
       quantity: 'quantity',
       total: 'totalAmount',
@@ -117,6 +124,14 @@ const parseCreditUpdateCsv = (text: string) => {
     const customerName = String(valueMap.customerName ?? valueMap.cust ?? '').trim();
     const date = String(valueMap.date ?? '').trim();
     const creditAmount = asNumber(valueMap.creditAmount ?? valueMap.credit ?? valueMap.creditamount);
+    const salesAmount = asNumber(
+      valueMap.salesAmount ??
+      valueMap.sales ??
+      valueMap.salesamount ??
+      valueMap.saleamount ??
+      valueMap.totalsales ??
+      valueMap.totalsalesamount
+    );
     const receivedAmount = asNumber(valueMap.receivedAmount ?? valueMap.recived ?? valueMap.received ?? valueMap.receivedamount);
     const balanceAmount = asNumber(valueMap.balanceAmount ?? valueMap.balance ?? valueMap.balanceamount);
     const productName = String(valueMap.productName ?? valueMap.product ?? '').trim();
@@ -128,6 +143,7 @@ const parseCreditUpdateCsv = (text: string) => {
     parsedRows.push({
       customerName,
       date,
+      salesAmount,
       creditAmount,
       receivedAmount,
       balanceAmount,
@@ -359,44 +375,27 @@ export const CreditUpdatePage: React.FC = () => {
       }
 
       const credit = asNumber(row.creditAmount);
+      const salesAmount = asNumber(row.salesAmount);
       const received = asNumber(row.receivedAmount);
       const balance = asNumber(row.balanceAmount);
-      const daySalesTotal = customerSales.reduce((sum, sale) => sum + (sale.totalPrice ?? sale.quantity * sale.pricePerCase), 0);
 
-      if (!Number.isFinite(credit) || credit! < 0) {
+      if (!Number.isFinite(credit)) {
         issues.push({ rowNumber, customerName: customer.name, message: 'CSV credit amount is invalid.' });
         continue;
       }
 
-      if (Math.abs(credit! - daySalesTotal) > 0.5) {
-        issues.push({
-          rowNumber,
-          customerName: customer.name,
-          message: `CSV credit amount ₹${credit!.toFixed(2)} does not match the total sales amount ₹${daySalesTotal.toFixed(2)} for this customer/date.`,
-        });
+      if (Number.isFinite(salesAmount) && salesAmount! < 0) {
+        issues.push({ rowNumber, customerName: customer.name, message: 'CSV sales amount cannot be negative.' });
         continue;
       }
 
-      if (!Number.isFinite(received) || received! < 0) {
+      if (!Number.isFinite(received)) {
         issues.push({ rowNumber, customerName: customer.name, message: 'CSV received amount is invalid.' });
         continue;
       }
 
-      if (received! > credit! + 0.01) {
-        issues.push({
-          rowNumber,
-          customerName: customer.name,
-          message: `received amount ₹${received!.toFixed(2)} cannot be greater than credit amount ₹${credit!.toFixed(2)}.`,
-        });
-        continue;
-      }
-
-      if (Number.isFinite(balance) && Math.abs((credit! - received!) - balance!) > 0.5) {
-        issues.push({
-          rowNumber,
-          customerName: customer.name,
-          message: `CSV balance ₹${(balance ?? 0).toFixed(2)} does not match credit minus received ₹${(credit! - received!).toFixed(2)}.`,
-        });
+      if (Number.isFinite(balance) && balance! < 0) {
+        issues.push({ rowNumber, customerName: customer.name, message: 'CSV balance amount cannot be negative.' });
         continue;
       }
 
@@ -691,10 +690,10 @@ export const CreditUpdatePage: React.FC = () => {
               <p className="mt-2 text-sm text-gray-600">Selected file: {importFileName}</p>
             ) : (
               <div className="space-y-1">
-                <p className="mt-2 text-sm text-gray-600">CSV should accept: <span className="font-medium">cust,date,credit amount,recived amount,balance amount</span></p>
-                <p className="text-sm text-gray-600">Example header: <span className="font-medium">cust,date,credit amount,recived amount,balance amount</span></p>
-                <p className="text-sm text-gray-600">Notes: provide either <span className="font-medium">balance</span> or both <span className="font-medium">credit</span> and <span className="font-medium">recived/received</span>.</p>
-                <p className="text-sm text-gray-600">Example row: <span className="font-medium">Ravi Kumar,2026-08-01,1500,0,1500</span></p>
+                <p className="mt-2 text-sm text-gray-600">CSV should accept: <span className="font-medium">cust,date,sales amount,credit amount,recived amount,balance amount</span></p>
+                <p className="text-sm text-gray-600">Example header: <span className="font-medium">cust,date,sales amount,credit amount,recived amount,balance amount</span></p>
+                <p className="text-sm text-gray-600">Notes: blank received values are not allowed; use <span className="font-medium">0</span> instead. The import preview will show the same column order you upload.</p>
+                <p className="text-sm text-gray-600">Example row: <span className="font-medium">Ambika Raghu,2026-08-01,34800,9800,25000,9800</span></p>
               </div>
             )}
           </div>
@@ -704,7 +703,7 @@ export const CreditUpdatePage: React.FC = () => {
             <textarea
               rows={6}
               className="w-full rounded border border-gray-300 bg-white px-3 py-2"
-              placeholder={`cust,date,credit amount,recived amount,balance amount\nRavi Kumar,2026-08-01,1500,0,1500`}
+              placeholder={`cust,date,sales amount,credit amount,recived amount,balance amount\nAmbika Raghu,2026-08-01,34800,9800,25000,9800`}
               value={importCsvText}
               onChange={(e) => setImportCsvText(e.target.value)}
             />
@@ -721,10 +720,10 @@ export const CreditUpdatePage: React.FC = () => {
                     <tr className="bg-gray-50">
                       <th className="px-3 py-2 text-left">Customer</th>
                       <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-right">Sales Amount</th>
                       <th className="px-3 py-2 text-right">Credit</th>
-                      <th className="px-3 py-2 text-right">Recived</th>
+                      <th className="px-3 py-2 text-right">Received</th>
                       <th className="px-3 py-2 text-right">Balance</th>
-                      <th className="px-3 py-2 text-left">Product</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -732,10 +731,10 @@ export const CreditUpdatePage: React.FC = () => {
                       <tr key={`${row.customerName}-${row.date}-${index}`}>
                         <td className="px-3 py-2">{row.customerName || ''}</td>
                         <td className="px-3 py-2">{row.date || ''}</td>
+                        <td className="px-3 py-2 text-right">{Number.isFinite(row.salesAmount) ? row.salesAmount : ''}</td>
                         <td className="px-3 py-2 text-right">{Number.isFinite(row.creditAmount) ? row.creditAmount : ''}</td>
                         <td className="px-3 py-2 text-right">{Number.isFinite(row.receivedAmount) ? row.receivedAmount : ''}</td>
                         <td className="px-3 py-2 text-right">{Number.isFinite(row.balanceAmount) ? row.balanceAmount : ''}</td>
-                        <td className="px-3 py-2">{row.productName || ''}</td>
                       </tr>
                     ))}
                   </tbody>
