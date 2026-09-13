@@ -3,7 +3,6 @@ import { Layout, Card, Button, Input, Select, Alert, Modal } from '@/components'
 import { customerService } from '@/services/customerService';
 import { productService } from '@/services/productService';
 import { salesService } from '@/services/salesService';
-import { importService } from '@/services/importService';
 import { Customer, Product, SaleEntry } from '@/types';
 import { parseDateInput } from '@/utils/dateUtils';
 
@@ -278,27 +277,30 @@ export const CreditUpdatePage: React.FC = () => {
         return;
       }
 
-      const updates: Array<{ id: string; data: Partial<SaleEntry> }> = matchingSales
+      let remainingAdjustment = Math.abs(parsedAmount);
+      const sortedSales = matchingSales
         .slice()
-        .sort((a, b) => (a.remainingAmount ?? 0) - (b.remainingAmount ?? 0))
-        .map((sale) => {
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const updates: Array<{ id: string; data: Partial<SaleEntry> }> = sortedSales.map((sale) => {
           const currentRemaining = sale.remainingAmount ?? 0;
           const total = sale.totalPrice ?? sale.quantity * sale.pricePerCase;
-          const delta = Math.min(Math.abs(parsedAmount), currentRemaining);
-          const newPaid = parsedAmount >= 0 ? (sale.paidAmount ?? 0) + delta : (sale.paidAmount ?? 0) - delta;
-          const safePaid = Math.min(Math.max(newPaid, 0), total);
-          const safeRemaining = Math.max(total - safePaid, 0);
-          const paymentStatus: 'pending' | 'done' = safeRemaining <= 0 ? 'done' : 'pending';
+        const adjustmentCapacity = parsedAmount >= 0 ? currentRemaining : sale.paidAmount ?? 0;
+        const delta = Math.min(remainingAdjustment, adjustmentCapacity);
+        remainingAdjustment -= delta;
+        const newPaid = parsedAmount >= 0 ? (sale.paidAmount ?? 0) + delta : (sale.paidAmount ?? 0) - delta;
+        const safePaid = Math.min(Math.max(newPaid, 0), total);
+        const safeRemaining = Math.max(total - safePaid, 0);
+        const paymentStatus: 'pending' | 'done' = safeRemaining <= 0 ? 'done' : 'pending';
 
-          return {
-            id: sale.id,
-            data: {
-              paidAmount: safePaid,
-              remainingAmount: safeRemaining,
-              paymentStatus,
-            },
-          };
-        });
+        return {
+          id: sale.id,
+          data: {
+            paidAmount: safePaid,
+            remainingAmount: safeRemaining,
+            paymentStatus,
+          },
+        };
+      });
 
       await salesService.batchUpdateSales(updates);
       await fetchRecords();
@@ -407,7 +409,6 @@ export const CreditUpdatePage: React.FC = () => {
 
   const applyValidatedRows = async (rows: any[]) => {
     const updates: Array<{ id: string; data: Partial<SaleEntry> }> = [];
-    const importRecords: Array<{ key: string; payload: any }> = [];
 
     for (const row of rows) {
       const { customer, rowDate, customerSales, credit, received, balance } = row;
@@ -471,31 +472,10 @@ export const CreditUpdatePage: React.FC = () => {
         }
       }
 
-      const importKey = `${customer.id}_${rowDate.toISOString().slice(0, 10)}_${amountToApply.toFixed(2)}_${(balance ?? (credit! - received!)).toFixed(2)}`;
-      const exists = await importService.exists(importKey);
-      if (exists) {
-        throw new Error(`Row ${row.rowNumber}: this payment import already exists.`);
-      }
-
-      importRecords.push({
-        key: importKey,
-        payload: {
-          customerId: customer.id,
-          customerName: customer.name,
-          date: rowDate.toISOString(),
-          receivedAmount: received ?? 0,
-          balanceAmount: balance ?? 0,
-          creditAmount: credit ?? 0,
-        },
-      });
     }
 
     if (updates.length > 0) {
       await salesService.batchUpdateSales(updates);
-    }
-
-    for (const record of importRecords) {
-      await importService.create(record.key, record.payload);
     }
 
     return updates.length;

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Card, Button, Input, Modal, Alert, Loading } from '@/components';
+import { downloadCsv } from '@/utils/csvUtils';
 import { productService } from '@/services/productService';
 import { userService } from '@/services/userService';
 import { authService } from '@/services/authService';
@@ -41,6 +42,35 @@ export const ProductsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleExportProducts = () => {
+    if (!products.length) {
+      setError('No product data available to export.');
+      return;
+    }
+
+    const rows = products.map((product) => ({
+      ID: product.id,
+      Name: product.name,
+      'Bottle Size': product.bottleSize,
+      'Current Stock': product.currentStock,
+      Status: product.status === 'active' ? 'Active' : 'Inactive',
+      'Created By': userMap[product.createdBy] || product.createdBy || '-',
+      'Created At': new Date(product.createdAt).toLocaleString(),
+      'Updated At': new Date(product.updatedAt).toLocaleString(),
+    }));
+
+    downloadCsv(rows, [
+      { label: 'ID', key: 'ID' },
+      { label: 'Name', key: 'Name' },
+      { label: 'Bottle Size', key: 'Bottle Size' },
+      { label: 'Current Stock', key: 'Current Stock' },
+      { label: 'Status', key: 'Status' },
+      { label: 'Created By', key: 'Created By' },
+      { label: 'Created At', key: 'Created At' },
+      { label: 'Updated At', key: 'Updated At' },
+    ], `products-${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
   const handleAddNew = () => {
@@ -309,6 +339,9 @@ export const ProductsPage: React.FC = () => {
         </Button>
         <Button variant="secondary" onClick={() => setIsImportModalOpen(true)} disabled={isPageLocked}>
           ⬆ Update Stock via CSV
+        </Button>
+        <Button variant="secondary" onClick={handleExportProducts}>
+          ⬇ Export CSV
         </Button>
       </div>
 

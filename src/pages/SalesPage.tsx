@@ -31,6 +31,10 @@ export const SalesPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isCsvUpsertModalOpen, setIsCsvUpsertModalOpen] = useState(false);
+  const [csvUpsertText, setCsvUpsertText] = useState('');
+  const [csvUpsertFileName, setCsvUpsertFileName] = useState('');
+  const [isUpsertImporting, setIsUpsertImporting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [importJsonText, setImportJsonText] = useState('');
   const [importFileName, setImportFileName] = useState('');
@@ -517,6 +521,214 @@ export const SalesPage: React.FC = () => {
     }
   };
 
+  const parseSalesUpsertCsv = (text: string) => {
+    const rows = parseCsvRows(text);
+    if (rows.length < 2) {
+      throw new Error('CSV must include a header row and at least one data row.');
+    }
+
+    const [headers, ...dataRows] = rows;
+    const normalizedHeaders = headers.map((h) => h.trim().toLowerCase().replace(/[^a-z0-9]+/g, ''));
+
+    return dataRows
+      .filter((row) => row.some((cell) => cell.trim()))
+      .map((row) => {
+        const record: Record<string, string> = {};
+        normalizedHeaders.forEach((header, index) => {
+          record[header] = row[index] ?? '';
+        });
+
+        const pickValue = (...keys: string[]) => {
+          for (const key of keys) {
+            const value = record[key];
+            if (value !== undefined && String(value).trim() !== '') {
+              return String(value).trim();
+            }
+          }
+          return '';
+        };
+
+        return {
+          date: pickValue('date', 'saledate', 'createdat'),
+          customer: pickValue('customer', 'customername', 'party', 'partyname'),
+          product: pickValue('product', 'productname', 'item', 'itemname', 'name'),
+          quantity: pickValue('quantity', 'qty', 'qtysold'),
+          pricePerCase: pickValue('pricepercase', 'price', 'rate', 'percaseprice'),
+          paidAmount: pickValue('paidamount', 'paid', 'amountpaid', 'advanceamount'),
+          remarks: pickValue('remarks', 'note', 'description'),
+        };
+      });
+  };
+
+  const validateSalesUpsertRows = (rows: Array<any>) => {
+    const errors: string[] = [];
+    const validRows: Array<any> = [];
+
+    rows.forEach((row, index) => {
+      try {
+        const dateStr = row.date?.trim();
+        if (!dateStr) throw new Error('Date is required');
+        const parsedDate = parseImportDate(dateStr);
+        if (!(parsedDate instanceof Date) || isNaN(parsedDate.getTime())) {
+          throw new Error('Invalid date format');
+        }
+
+        if (!row.customer?.trim()) throw new Error('Customer is required');
+        if (!row.product?.trim()) throw new Error('Product is required');
+
+        const quantity = Number(row.quantity?.trim() || 0);
+        if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Quantity must be > 0');
+
+        const pricePerCase = Number(row.pricePerCase?.trim() || 0);
+        if (!Number.isFinite(pricePerCase) || pricePerCase <= 0) throw new Error('Price per case must be > 0');
+
+        const paidAmount = Number(row.paidAmount?.trim() || 0);
+        if (!Number.isFinite(paidAmount) || paidAmount < 0) throw new Error('Paid amount must be >= 0');
+
+        validRows.push({
+          ...row,
+          date: parsedDate,
+          quantity,
+          pricePerCase,
+          paidAmount,
+        });
+      } catch (err) {
+        errors.push(`Row ${index + 1}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    });
+
+    return { validRows, errors };
+  };
+
+  const handleCsvUpsertFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      setCsvUpsertText(text);
+      setCsvUpsertFileName(file.name);
+      setError('');
+      setSuccessMessage('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to read CSV file');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handleCsvUpsertImport = async () => {
+    if (!csvUpsertText.trim()) {
+      setError('Please upload or paste a CSV file first.');
+      return;
+    }
+
+    if (!user) {
+      setError('User not authenticated');
+      return;
+    }
+
+    try {
+      setIsUpsertImporting(true);
+      const rawRows = parseSalesUpsertCsv(csvUpsertText);
+
+      const latestProducts = await productService.getAll();
+      const latestCustomers = await customerService.getAll();
+
+      const { validRows, errors } = validateSalesUpsertRows(rawRows);
+
+      if (errors.length > 0 && validRows.length === 0) {
+        setError(`CSV validation failed:\n${errors.join('\n')}`);
+        setIsUpsertImporting(false);
+        return;
+      }
+
+      const userId = (user as any)?.id || authService.getCurrentUser()?.uid;
+      if (!userId) throw new Error('User ID not found');
+
+      let successCount = 0;
+      let updateCount = 0;
+      const importErrors: string[] = [];
+
+      for (const row of validRows) {
+        try {
+          const productId = resolveProductId(row, latestProducts);
+          const customerId = resolveCustomerId(row, latestCustomers);
+
+          if (!productId) {
+            importErrors.push(`Row: Product "${row.product}" not found`);
+            continue;
+          }
+
+          if (!customerId) {
+            importErrors.push(`Row: Customer "${row.customer}" not found`);
+            continue;
+          }
+
+          const totalPrice = row.quantity * row.pricePerCase;
+          const remainingAmount = Math.max(totalPrice - row.paidAmount, 0);
+
+          const payload: Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'> = {
+            date: row.date,
+            productId,
+            customerId,
+            quantity: row.quantity,
+            pricePerCase: row.pricePerCase,
+            totalPrice,
+            paidAmount: row.paidAmount,
+            remainingAmount,
+            paymentStatus: remainingAmount <= 0 ? 'done' : 'pending',
+            remarks: row.remarks || '',
+          };
+
+          const result = await salesService.upsert(payload, userId);
+          if ((result as any).action === 'updated') {
+            updateCount++;
+          } else {
+            successCount++;
+          }
+        } catch (err) {
+          importErrors.push(`Row: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+      }
+
+      setCsvUpsertText('');
+      setCsvUpsertFileName('');
+      setIsCsvUpsertModalOpen(false);
+
+      const message = `Upsert complete: ${successCount} created, ${updateCount} updated${importErrors.length > 0 ? `, ${importErrors.length} failed` : ''}`;
+      setSuccessMessage(message);
+      if (importErrors.length > 0) {
+        setError(`Some rows failed:\n${importErrors.slice(0, 5).join('\n')}${importErrors.length > 5 ? `\n... and ${importErrors.length - 5} more` : ''}`);
+      }
+
+      await fetchData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upsert sales from CSV');
+    } finally {
+      setIsUpsertImporting(false);
+    }
+  };
+
+  const downloadSalesUpsertTemplate = () => {
+    const headers = ['Date', 'Customer', 'Product', 'Quantity', 'Price Per Case', 'Paid Amount', 'Remarks'];
+    const rows = [
+      ['2024-09-01', 'Customer A', 'Lemon Soda 500ml', '100', '10', '500', 'Update payment'],
+      ['2024-09-02', 'Customer B', 'Orange Juice 1L', '50', '20', '0', 'New order'],
+      ['2024-09-03', 'Customer A', 'Lemon Soda 500ml', '200', '10', '2000', 'Fully paid'],
+    ];
+    const csvContent = [headers, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(',')).join('\r\n');
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sales-upsert-template-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const addBulkProductRow = () => {
     setBulkProductRows([...bulkProductRows, { productId: '', quantity: 0, pricePerCase: 0, paidAmount: 0, paymentStatus: 'pending', remarks: '' }]);
   };
@@ -812,6 +1024,9 @@ export const SalesPage: React.FC = () => {
             <Button variant="outline" onClick={handleOpenImportModal} disabled={isPageLocked}>
               ⬆ Upload JSON
             </Button>
+            <Button variant="outline" onClick={() => setIsCsvUpsertModalOpen(true)} disabled={isPageLocked}>
+              🔄 Upsert CSV
+            </Button>
             <Button variant="secondary" onClick={handleExportSales}>
               ⬇ Export CSV
             </Button>
@@ -1099,6 +1314,78 @@ export const SalesPage: React.FC = () => {
 CSV example:
 date,customer,product,quantity,pricePerCase,paidAmount,remarks
 2026-07-26,Ravi Kumar,Water Bottle,10,120,600,Imported from CSV`}</pre>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isCsvUpsertModalOpen}
+        onClose={() => setIsCsvUpsertModalOpen(false)}
+        title="Upsert Sales via CSV"
+        size="lg"
+        footer={
+          <div className="flex gap-4 justify-end">
+            <Button variant="outline" onClick={() => setIsCsvUpsertModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleCsvUpsertImport} loading={isUpsertImporting}>
+              Upsert Sales
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Import sales records via CSV. Matches by customer name, date, and product. Updates existing records or creates new ones.
+          </p>
+
+          <div className="mb-3 flex gap-2">
+            <button
+              type="button"
+              onClick={downloadSalesUpsertTemplate}
+              className="px-3 py-2 bg-blue-100 text-blue-700 text-xs font-medium rounded hover:bg-blue-200"
+            >
+              📥 Download Template CSV
+            </button>
+          </div>
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Choose CSV file</span>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleCsvUpsertFileChange}
+              className="mt-2 block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-opacity-90"
+            />
+          </label>
+
+          {csvUpsertFileName && <p className="text-sm text-gray-600">Selected: {csvUpsertFileName}</p>}
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Or paste CSV content</span>
+            <textarea
+              rows={10}
+              value={csvUpsertText}
+              onChange={(e) => setCsvUpsertText(e.target.value)}
+              placeholder="Date,Customer,Product,Quantity,Price Per Case,Paid Amount,Remarks
+2024-09-01,Customer A,Lemon Soda 500ml,100,10,500,Update payment
+2024-09-02,Customer B,Orange Juice 1L,50,20,0,New order"
+              className="mt-2 w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-gray-700">
+            <p className="font-semibold mb-2 text-blue-900">Column Requirements:</p>
+            <ul className="space-y-1 mb-2">
+              <li><span className="font-medium text-red-600">Date*</span> - YYYY-MM-DD format</li>
+              <li><span className="font-medium text-red-600">Customer*</span> - Customer name or ID</li>
+              <li><span className="font-medium text-red-600">Product*</span> - Product name or ID</li>
+              <li><span className="font-medium text-red-600">Quantity*</span> - Positive number</li>
+              <li><span className="font-medium text-red-600">Price Per Case*</span> - Positive number</li>
+              <li><span className="font-medium">Paid Amount</span> - Optional (default: 0)</li>
+              <li><span className="font-medium">Remarks</span> - Optional</li>
+            </ul>
+            <p className="text-xs text-gray-600"><strong>Matching Logic:</strong> Records are matched by customer name, date, and product. If a match is found, the record is updated with new quantities and amounts. If no match is found, a new record is created.</p>
           </div>
         </div>
       </Modal>

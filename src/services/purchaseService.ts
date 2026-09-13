@@ -153,6 +153,7 @@ export const purchaseService = {
         if (!expensesSnapshot.empty) {
           const expenseDoc = expensesSnapshot.docs[0];
           await updateDoc(expenseDoc.ref, {
+            date: Timestamp.fromDate(data.date),
             value: data.paidAmount ?? 0,
             updatedAt: now,
           });

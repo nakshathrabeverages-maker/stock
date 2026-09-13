@@ -272,4 +272,98 @@ export const salesService = {
       throw new Error(`Failed to delete selected sales: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   },
+
+  async upsert(
+    data: Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>,
+    userId: string,
+    options?: { skipStockValidation?: boolean }
+  ) {
+    try {
+      // Normalize date to start of day for matching
+      const normalizedDate = parseDateInput(data.date);
+      const dayStart = new Date(normalizedDate);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(normalizedDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      // Query for existing sale matching customer, date, and product
+      const q = query(
+        collection(db, COLLECTION),
+        where('customerId', '==', data.customerId),
+        where('productId', '==', data.productId),
+        where('date', '>=', Timestamp.fromDate(dayStart)),
+        where('date', '<=', Timestamp.fromDate(dayEnd))
+      );
+
+      const querySnapshot = await getDocs(q);
+      const existingDoc = querySnapshot.docs[0]; // Get first match if any
+
+      if (existingDoc) {
+        // Update existing record
+        const existingData = existingDoc.data();
+        const existingEntry = {
+          ...existingData,
+          id: existingDoc.id,
+          date: existingData.date?.toDate?.() || new Date(),
+        } as SaleEntry;
+
+        const newQuantity = data.quantity;
+        const oldQuantity = existingEntry.quantity;
+        const quantityDifference = newQuantity - oldQuantity;
+
+        // Handle stock adjustment
+        if (quantityDifference !== 0) {
+          const product = await productService.getById(data.productId);
+          if (quantityDifference > 0 && !options?.skipStockValidation && product.currentStock < quantityDifference) {
+            throw new Error('Insufficient product stock to increase sale quantity');
+          }
+          await productService.update(data.productId, {
+            currentStock: Math.max(product.currentStock - quantityDifference, 0),
+          });
+        }
+
+        // Recalculate amounts
+        const total = data.totalPrice ?? (data.quantity * data.pricePerCase);
+        const paid = data.paidAmount ?? 0;
+        const remaining = Math.max(total - paid, 0);
+        const paymentStatus = remaining <= 0 ? 'done' : 'pending';
+
+        const now = Timestamp.now();
+        await updateDoc(doc(db, COLLECTION, existingDoc.id), {
+          quantity: newQuantity,
+          pricePerCase: data.pricePerCase,
+          totalPrice: total,
+          paidAmount: paid,
+          remainingAmount: remaining,
+          paymentStatus,
+          remarks: data.remarks ?? '',
+          updatedAt: now,
+        });
+
+        notifySalesChanged();
+
+        return {
+          ...data,
+          id: existingDoc.id,
+          totalPrice: total,
+          paidAmount: paid,
+          remainingAmount: remaining,
+          paymentStatus,
+          createdBy: existingEntry.createdBy,
+          createdAt: existingEntry.createdAt,
+          updatedAt: now.toDate(),
+          action: 'updated' as const,
+        } as SaleEntry & { action: 'updated' };
+      } else {
+        // Create new record
+        const result = await this.create(data, userId, options);
+        return {
+          ...result,
+          action: 'created' as const,
+        } as SaleEntry & { action: 'created' };
+      }
+    } catch (error) {
+      throw new Error(`Failed to upsert sale: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  },
 };

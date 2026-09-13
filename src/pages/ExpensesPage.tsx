@@ -5,6 +5,7 @@ import { expenseService } from '@/services/expenseService';
 import { userService } from '@/services/userService';
 import { usePageLock } from '@/hooks/usePageLock';
 import { ExpenseEntry } from '@/types';
+import { parseDateInput } from '@/utils/dateUtils';
 
 const EXPENSE_TYPES = [
   { value: 'rawmaterial', label: 'Raw Material' },
@@ -31,11 +32,20 @@ export const ExpensesPage: React.FC = () => {
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [searchFilter, setSearchFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [startDateFilter, setStartDateFilter] = useState<string>('');
   const [endDateFilter, setEndDateFilter] = useState<string>('');
   const [sortOption, setSortOption] = useState<string>('dateDesc');
   const { lockDate, isLocked: isPageLocked } = usePageLock('expenses');
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importCsvText, setImportCsvText] = useState('');
+  const [importFileName, setImportFileName] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [importIssues, setImportIssues] = useState<Array<{ rowNumber: number; message: string }>>([]);
+  const [isImportIssueModalOpen, setIsImportIssueModalOpen] = useState(false);
+  const [pendingValidRows, setPendingValidRows] = useState<any[]>([]);
+  const [success, setSuccess] = useState('');
   const [formData, setFormData] = useState<Omit<ExpenseEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>>({
     date: new Date(),
     type: 'rawmaterial',
@@ -135,10 +145,13 @@ export const ExpensesPage: React.FC = () => {
     return entries
       .filter((entry) => {
         const entryDate = new Date(entry.date);
+        const searchValue = searchFilter.trim().toLowerCase();
+        const matchesSearch = !searchValue || [entry.subtype, entry.vendor, entry.remarks]
+          .some((value) => value?.toLowerCase().includes(searchValue));
         const matchesType = typeFilter === 'all' || entry.type === typeFilter;
         const matchesStart = startDate ? entryDate >= startDate : true;
         const matchesEnd = endDate ? entryDate <= endDate : true;
-        return matchesType && matchesStart && matchesEnd;
+        return matchesSearch && matchesType && matchesStart && matchesEnd;
       })
       .sort((a, b) => {
         const aDate = new Date(a.date).getTime();
@@ -165,7 +178,256 @@ export const ExpensesPage: React.FC = () => {
             return bDate - aDate;
         }
       });
-  }, [entries, typeFilter, startDateFilter, endDateFilter, sortOption]);
+  }, [entries, searchFilter, typeFilter, startDateFilter, endDateFilter, sortOption]);
+
+  const hasActiveFilters = searchFilter || typeFilter !== 'all' || startDateFilter || endDateFilter;
+
+  const clearFilters = () => {
+    setSearchFilter('');
+    setTypeFilter('all');
+    setStartDateFilter('');
+    setEndDateFilter('');
+  };
+
+  const asNumber = (value: string | number | undefined | null): number | undefined => {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    const cleaned = String(value)
+      .trim()
+      .replace(/₹/g, '')
+      .replace(/,/g, '')
+      .replace(/\s+/g, '');
+    if (!cleaned) return undefined;
+    const num = Number(cleaned);
+    return Number.isFinite(num) ? num : undefined;
+  };
+
+  const parseCsvLine = (line: string) => {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        values.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    values.push(current.trim());
+    return values;
+  };
+
+  const parseExpenseCsv = (text: string) => {
+    if (!text || !text.trim()) return [];
+    const rows = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (rows.length < 2) return [];
+    const headers = parseCsvLine(rows[0]).map((header) =>
+      header.trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
+    );
+    const normalizedHeaders = new Map<string, string>();
+    headers.forEach((header, index) => {
+      const aliasMap: Record<string, string> = {
+        date: 'date',
+        type: 'type',
+        expensetype: 'type',
+        category: 'type',
+        subtype: 'subtype',
+        category2: 'subtype',
+        vendor: 'vendor',
+        supplier: 'vendor',
+        amount: 'value',
+        value: 'value',
+        cost: 'value',
+        expense: 'value',
+        remarks: 'remarks',
+        notes: 'remarks',
+        description: 'remarks',
+      };
+      normalizedHeaders.set(header, aliasMap[header] ?? header);
+    });
+    const parsedRows: any[] = [];
+    for (let i = 1; i < rows.length; i += 1) {
+      const values = parseCsvLine(rows[i]);
+      if (values.every((value) => !value.trim())) continue;
+      const row: Record<string, any> = {};
+      for (let j = 0; j < headers.length; j += 1) {
+        const key = normalizedHeaders.get(headers[j]) ?? headers[j];
+        row[key] = values[j] ?? '';
+      }
+      const date = String(row.date ?? '').trim();
+      const type = String(row.type ?? '').trim().toLowerCase();
+      const subtype = String(row.subtype ?? '').trim();
+      const vendor = String(row.vendor ?? '').trim();
+      const value = asNumber(row.value);
+      const remarks = String(row.remarks ?? '').trim();
+      parsedRows.push({ date, type, subtype, vendor, value, remarks });
+    }
+    return parsedRows;
+  };
+
+  const validateExpenseRows = async (rows: any[]) => {
+    const validRows: any[] = [];
+    const issues: Array<{ rowNumber: number; message: string }> = [];
+    const expenseTypeValues = EXPENSE_TYPES.map((t) => t.value);
+    for (const [index, row] of rows.entries()) {
+      const rowNumber = index + 2;
+      const { date, type, subtype, vendor, value, remarks } = row;
+      if (!date) {
+        issues.push({ rowNumber, message: 'Missing date field.' });
+        continue;
+      }
+      const parsedDate = parseDateInput(date);
+      if (Number.isNaN(parsedDate.getTime())) {
+        issues.push({ rowNumber, message: `Invalid date format '${date}'.` });
+        continue;
+      }
+      if (!type) {
+        issues.push({ rowNumber, message: 'Missing expense type field.' });
+        continue;
+      }
+      const matchedType = expenseTypeValues.find((t) => t.toLowerCase() === type.toLowerCase());
+      if (!matchedType) {
+        issues.push({
+          rowNumber,
+          message: `Invalid expense type '${type}'. Valid types are: ${EXPENSE_TYPES.map((t) => t.value).join(', ')}`,
+        });
+        continue;
+      }
+      if (!Number.isFinite(value) || value <= 0) {
+        issues.push({ rowNumber, message: `Invalid or missing amount. Must be a positive number.` });
+        continue;
+      }
+      validRows.push({ date: parsedDate, type: matchedType, subtype, vendor, value, remarks });
+    }
+    return { validRows, issues };
+  };
+
+  const applyValidatedRows = async (rows: any[]) => {
+    let count = 0;
+    for (const row of rows) {
+      await expenseService.create(
+        {
+          date: row.date,
+          type: row.type,
+          subtype: row.subtype || '',
+          vendor: row.vendor || '',
+          value: row.value,
+          remarks: row.remarks || '',
+        } as any,
+        'system'
+      );
+      count += 1;
+    }
+    return count;
+  };
+
+  const handleCsvFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setImportCsvText(text);
+      setImportFileName(file.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to read CSV file');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const downloadCsvTemplate = () => {
+    const headers = ['Date', 'Type', 'Subtype', 'Vendor', 'Amount', 'Remarks'];
+    const rows = [
+      ['2024-09-01', 'rawmaterial', 'Steel', 'ABC Inc', '5000', 'Purchase order'],
+      ['2024-09-02', 'salary', 'Monthly', 'Staff', '50000', 'September salary'],
+      ['2024-09-03', 'powerbill', '', 'Electric Co', '15000', 'Monthly bill'],
+      ['2024-09-04', 'transport', 'Delivery', 'Transport Co', '3000', '']
+    ];
+    const csvContent = [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\r\n');
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `expense-template-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleApplyCsvUpdates = async () => {
+    if (!importCsvText.trim()) {
+      setError('Please upload or paste a CSV file first.');
+      return;
+    }
+    try {
+      const parsedRows = parseExpenseCsv(importCsvText);
+      if (!parsedRows.length) {
+        setError('No valid rows were found in the CSV.');
+        return;
+      }
+      setIsImporting(true);
+      setError('');
+      const { validRows, issues } = await validateExpenseRows(parsedRows);
+      if (issues.length > 0) {
+        setImportIssues(issues);
+        setPendingValidRows(validRows);
+        setIsImportIssueModalOpen(true);
+        setIsImporting(false);
+        return;
+      }
+      const appliedCount = await applyValidatedRows(validRows);
+      await fetchExpenses();
+      setError('');
+      setSuccess(`Imported ${appliedCount} expense records from the CSV.`);
+      setImportCsvText('');
+      setImportFileName('');
+      setIsImportModalOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to apply CSV expense records');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleContinueAfterIssues = async () => {
+    if (pendingValidRows.length === 0) {
+      setImportIssues([]);
+      setPendingValidRows([]);
+      setIsImportIssueModalOpen(false);
+      setError('No valid rows are available to continue. Please correct the CSV and try again.');
+      return;
+    }
+    try {
+      setLoading(true);
+      setIsImportIssueModalOpen(false);
+      const appliedCount = await applyValidatedRows(pendingValidRows);
+      await fetchExpenses();
+      setError('');
+      setSuccess(`Skipped invalid rows and imported ${appliedCount} valid expense records.`);
+      setImportCsvText('');
+      setImportFileName('');
+      setIsImportModalOpen(false);
+      setImportIssues([]);
+      setPendingValidRows([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to apply the valid CSV rows.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleExportExpenses = () => {
     if (!filteredEntries.length) {
@@ -197,6 +459,7 @@ export const ExpensesPage: React.FC = () => {
   return (
     <Layout title="Expenses" subtitle="Track company expenses">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
+      {success && <Alert type="success" message={success} onClose={() => setSuccess('')} />}
       {isPageLocked && lockDate && (
         <Alert
           type="warning"
@@ -207,14 +470,26 @@ export const ExpensesPage: React.FC = () => {
 
       <div className="mb-6 flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-4">
-<Button variant="primary" onClick={handleAddNew} disabled={isPageLocked}>
+          <Button variant="primary" onClick={handleAddNew} disabled={isPageLocked}>
             ➕ Add Expense
           </Button>
           <Button variant="secondary" onClick={handleExportExpenses}>
             ⬇ Export CSV
           </Button>
+          <Button variant="secondary" onClick={() => setIsImportModalOpen(true)} disabled={isPageLocked}>
+            ⬆ Import CSV
+          </Button>
 
           <div className="flex flex-wrap gap-3">
+            <div className="min-w-[220px]">
+              <Input
+                label="Search expenses"
+                type="search"
+                placeholder="Subtype, vendor or remarks"
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+              />
+            </div>
             <div className="min-w-[180px]">
               <Select
                 label="Expense Type"
@@ -254,11 +529,21 @@ export const ExpensesPage: React.FC = () => {
                 onChange={(e) => setSortOption(e.target.value)}
               />
             </div>
+            {hasActiveFilters && (
+              <div className="flex items-end">
+                <Button variant="outline" size="sm" onClick={clearFilters}>
+                  Clear Filters
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <Card>
+        <div className="border-b px-6 py-3 text-sm text-gray-600">
+          Showing {filteredEntries.length} of {entries.length} expenses
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50">
@@ -356,6 +641,114 @@ export const ExpensesPage: React.FC = () => {
             value={formData.remarks}
             onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        title="Import Expenses from CSV"
+        size="lg"
+        footer={
+          <div className="flex gap-4 justify-end">
+            <Button variant="outline" onClick={() => setIsImportModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleApplyCsvUpdates} disabled={isImporting || !importCsvText.trim()}>
+              {isImporting ? 'Importing...' : 'Import CSV'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Upload a CSV file or paste rows below. The import will create new expense records.
+          </p>
+          <div className="rounded-lg border border-dashed border-gray-300 p-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Choose CSV file</label>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleCsvFileUpload}
+              className="block w-full text-sm text-gray-600 file:mr-4 file:rounded file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200"
+            />
+            {importFileName && <p className="mt-2 text-sm text-gray-500">Selected: {importFileName}</p>}
+          </div>
+          <label className="block text-sm font-medium text-gray-700">Or paste CSV content</label>
+          <textarea
+            rows={10}
+            value={importCsvText}
+            onChange={(e) => setImportCsvText(e.target.value)}
+            placeholder="Date,Type,Subtype,Vendor,Amount,Remarks
+2024-09-01,rawmaterial,Steel,ABC Inc,5000,Purchase order#123
+2024-09-02,salary,Monthly,Staff,50000,September salary"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          />
+          <div className="mb-3 flex gap-2">
+            <button type="button" onClick={downloadCsvTemplate} className="px-3 py-2 bg-blue-100 text-blue-700 text-xs font-medium rounded hover:bg-blue-200">
+              📥 Download Template CSV
+            </button>
+          </div>
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-gray-700">
+            <p className="font-semibold mb-2 text-blue-900">Column Requirements:</p>
+            <ul className="space-y-1 mb-2">
+              <li><span className="font-medium text-red-600">Date*</span> - YYYY-MM-DD format</li>
+              <li><span className="font-medium text-red-600">Type*</span> - See list below</li>
+              <li><span className="font-medium text-red-600">Amount*</span> - Positive number</li>
+              <li><span className="font-medium">Subtype</span> - Optional</li>
+              <li><span className="font-medium">Vendor</span> - Optional</li>
+              <li><span className="font-medium">Remarks</span> - Optional</li>
+            </ul>
+            <p className="font-medium mb-1">Valid Types:</p>
+            <p className="text-xs leading-relaxed">{EXPENSE_TYPES.map((t) => t.value).join(', ')}</p>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isImportIssueModalOpen}
+        onClose={() => {
+          setIsImportIssueModalOpen(false);
+          setImportIssues([]);
+          setPendingValidRows([]);
+        }}
+        title="CSV validation issues"
+        size="lg"
+        footer={
+          <div className="flex flex-col sm:flex-row gap-3 justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setIsImportIssueModalOpen(false);
+                setImportIssues([]);
+                setPendingValidRows([]);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleContinueAfterIssues} loading={loading}>
+              Skip invalid rows & continue
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-700">
+            Some rows in the uploaded CSV have validation issues. You can skip those records and continue with valid rows, or cancel to correct the CSV.
+          </p>
+          <div className="max-h-72 overflow-y-auto rounded border border-gray-200 bg-gray-50 p-3">
+            {importIssues.length > 0 ? (
+              <ul className="space-y-2 text-sm text-gray-700">
+                {importIssues.map((issue) => (
+                  <li key={`${issue.rowNumber}`} className="rounded border border-red-200 bg-white p-2">
+                    <span className="font-medium text-red-700">Row {issue.rowNumber}</span>: {issue.message}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-gray-600">No validation issues detected.</p>
+            )}
+          </div>
         </div>
       </Modal>
     </Layout>
