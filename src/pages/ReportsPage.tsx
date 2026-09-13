@@ -51,6 +51,10 @@ const REPORT_SORT_OPTIONS: Record<string, { value: string; label: string }[]> = 
     { value: 'totalCredit', label: 'Outstanding Credit' },
     { value: 'orders', label: 'Orders' },
   ],
+  creditByMonth: [
+    { value: 'customerName', label: 'Customer' },
+    { value: 'totalCredit', label: 'Total Credit' },
+  ],
   expenses: [
     { value: 'date', label: 'Date' },
     { value: 'type', label: 'Type' },
@@ -110,6 +114,9 @@ const REPORT_FILTER_COLUMNS: Record<string, { value: string; label: string }[]> 
     { value: 'paymentStatus', label: 'Payment Status' },
   ],
   credit: [
+    { value: 'customerName', label: 'Customer' },
+  ],
+  creditByMonth: [
     { value: 'customerName', label: 'Customer' },
   ],
   expenses: [
@@ -234,6 +241,7 @@ export const ReportsPage: React.FC = () => {
   const [creditReport, setCreditReport] = useState<
     { customerId: string; customerName: string; totalCredit: number; orders: SaleEntry[] }[]
   >([]);
+  const [creditByMonthData, setCreditByMonthData] = useState<any[]>([]);
   const [expenseData, setExpenseData] = useState<ExpenseEntry[]>([]);
   const [expenseByTypeData, setExpenseByTypeData] = useState<
     { type: string; totalAmount: number; count: number }[]
@@ -393,6 +401,61 @@ export const ReportsPage: React.FC = () => {
         });
 
         setCreditReport(Array.from(grouped.values()).sort((a, b) => a.customerName.localeCompare(b.customerName)));
+      } else if (type === 'creditByMonth') {
+        const data = await salesService.getAll({ startDate: start, endDate: end });
+        const pendingSales = data.filter((entry) => (entry.remainingAmount ?? 0) > 0);
+        
+        // Group by customer first
+        const customerGroups = new Map<string, { customerId: string; customerName: string; sales: SaleEntry[] }>();
+        pendingSales.forEach((entry) => {
+          const customer = customers.find((c) => c.id === entry.customerId);
+          const customerName = customer?.name || 'Unknown';
+          const group = customerGroups.get(entry.customerId) || {
+            customerId: entry.customerId,
+            customerName,
+            sales: [],
+          };
+          group.sales.push(entry);
+          customerGroups.set(entry.customerId, group);
+        });
+
+        // Generate month columns and calculate totals
+        const monthColumns = new Map<number, string>(); // month index -> "Jun", "Jul", etc.
+        const reportRows: any[] = [];
+
+        Array.from(customerGroups.values()).forEach((group) => {
+          const monthTotals = new Map<number, number>();
+          let totalCredit = 0;
+
+          group.sales.forEach((sale) => {
+            const saleDate = sale.date instanceof Date ? sale.date : new Date(sale.date);
+            const monthIndex = saleDate.getMonth();
+            const monthLabel = MONTH_ABBREVIATIONS[monthIndex];
+            
+            const current = monthTotals.get(monthIndex) || 0;
+            monthTotals.set(monthIndex, current + (sale.remainingAmount ?? 0));
+            totalCredit += sale.remainingAmount ?? 0;
+            
+            monthColumns.set(monthIndex, monthLabel);
+          });
+
+          const row: any = {
+            customerId: group.customerId,
+            customerName: group.customerName,
+            totalCredit,
+          };
+
+          // Add month columns
+          Array.from(monthColumns.entries()).forEach(([monthIndex, monthLabel]) => {
+            row[monthLabel] = monthTotals.get(monthIndex) || 0;
+          });
+
+          reportRows.push(row);
+        });
+
+        // Sort by customer name
+        reportRows.sort((a, b) => a.customerName.localeCompare(b.customerName));
+        setCreditByMonthData(reportRows);
       } else if (type === 'expenses') {
         const data = await expenseService.getAll({ startDate: start, endDate: end });
         setExpenseData(data);
@@ -502,6 +565,28 @@ export const ReportsPage: React.FC = () => {
           { label: 'Orders', key: 'orders' },
         ];
         rows = rows.map((row) => ({ ...row, orders: row.orders?.length ?? 0 }));
+        break;
+      case 'creditByMonth':
+        rows = filteredCreditByMonthData;
+        // Build headers dynamically from month columns
+        headers = [
+          { label: 'Customer', key: 'customerName' },
+        ];
+        // Add month columns
+        const monthSet = new Set<string>();
+        filteredCreditByMonthData.forEach((row) => {
+          Object.keys(row).forEach((key) => {
+            if (MONTH_ABBREVIATIONS.includes(key)) {
+              monthSet.add(key);
+            }
+          });
+        });
+        // Sort months chronologically
+        const sortedMonths = MONTH_ABBREVIATIONS.filter((m) => monthSet.has(m));
+        sortedMonths.forEach((month) => {
+          headers.push({ label: month, key: month });
+        });
+        headers.push({ label: 'Total Credit', key: 'totalCredit' });
         break;
       case 'expensesByType':
         rows = filteredExpenseByTypeRows;
@@ -694,6 +779,11 @@ export const ReportsPage: React.FC = () => {
     [creditReport, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
+  const filteredCreditByMonthData = useMemo(
+    () => applyFilterAndSort(creditByMonthData, ['customerName', 'totalCredit']),
+    [creditByMonthData, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
+  );
+
   const filteredExpenseRows = useMemo(
     () => applyFilterAndSort(expenseRows, ['dateLabel', 'type', 'subtype', 'value', 'remarks']),
     [expenseRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
@@ -804,6 +894,7 @@ export const ReportsPage: React.FC = () => {
                 { value: 'purchases', label: 'Raw Material Purchases' },
                 { value: 'sales', label: 'Sales' },
                 { value: 'credit', label: 'Credit Report' },
+                { value: 'creditByMonth', label: 'Credit by Month' },
                 { value: 'expenses', label: 'Expenses' },
                 { value: 'expensesByType', label: 'Expenses by Type' },
                 { value: 'customers', label: 'Customers List' },
@@ -1122,6 +1213,50 @@ export const ReportsPage: React.FC = () => {
             </div>
           ) : (
             <p className="text-gray-600">No credit data found for the selected period.</p>
+          )}
+        </Card>
+      )}
+
+      {reportType === 'creditByMonth' && (
+        <Card title="Credit by Month" subtitle="Unpaid sales amount by customer and month">
+          {filteredCreditByMonthData.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-semibold">Customer</th>
+                    {MONTH_ABBREVIATIONS.map((month) => {
+                      const hasData = filteredCreditByMonthData.some((row) => row[month] !== undefined && row[month] > 0);
+                      return hasData ? (
+                        <th key={month} className="px-4 py-2 text-right font-semibold">{month}</th>
+                      ) : null;
+                    })}
+                    <th className="px-4 py-2 text-right font-semibold bg-blue-50">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredCreditByMonthData.map((row) => (
+                    <tr key={row.customerId}>
+                      <td className="px-4 py-2 font-medium">{row.customerName}</td>
+                      {MONTH_ABBREVIATIONS.map((month) => {
+                        const hasData = filteredCreditByMonthData.some((r) => r[month] !== undefined && r[month] > 0);
+                        return hasData ? (
+                          <td key={month} className="px-4 py-2 text-right">
+                            ₹{((row[month] ?? 0) as number).toFixed(2)}
+                          </td>
+                        ) : null;
+                      })}
+                      <td className="px-4 py-2 text-right font-semibold bg-blue-50">₹{row.totalCredit.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-4 text-right font-semibold">
+                Total Credit: ₹{creditByMonthData.reduce((sum, row) => sum + row.totalCredit, 0).toFixed(2)}
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-600">No unpaid sales found for the selected period.</p>
           )}
         </Card>
       )}
