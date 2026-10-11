@@ -4,7 +4,7 @@ import { customerService } from '@/services/customerService';
 import { productService } from '@/services/productService';
 import { salesService } from '@/services/salesService';
 import { Customer, Product, SaleEntry } from '@/types';
-import { parseDateInput } from '@/utils/dateUtils';
+import { getEndOfDay, getStartOfDay, parseDateInput } from '@/utils/dateUtils';
 
 const normalizeValue = (value: string | undefined | null) =>
   (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -180,10 +180,11 @@ export const CreditUpdatePage: React.FC = () => {
     const loadInitialData = async () => {
       try {
         const [custs, prods] = await Promise.all([customerService.getAll(), productService.getAll(false)]);
-        setCustomers(custs);
+        const sortedCustomers = [...custs].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+        setCustomers(sortedCustomers);
         setProducts(prods);
-        if (custs.length > 0) {
-          setSelectedCustomerId(custs[0].id);
+        if (sortedCustomers.length > 0) {
+          setSelectedCustomerId(sortedCustomers[0].id);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load initial data');
@@ -192,6 +193,11 @@ export const CreditUpdatePage: React.FC = () => {
 
     loadInitialData();
   }, []);
+
+  const sortedCustomers = useMemo(
+    () => [...customers].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
+    [customers]
+  );
 
   const fetchRecords = async () => {
     if (!selectedCustomerId) {
@@ -203,9 +209,8 @@ export const CreditUpdatePage: React.FC = () => {
       setLoading(true);
       setError('');
       setSuccess('');
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
+      const start = getStartOfDay(startDate);
+      const end = getEndOfDay(endDate);
 
       const sales = await salesService.getAll({ startDate: start, endDate: end });
       const filtered = sales
@@ -265,9 +270,8 @@ export const CreditUpdatePage: React.FC = () => {
       setError('');
       setSuccess('');
 
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
+      const start = getStartOfDay(startDate);
+      const end = getEndOfDay(endDate);
 
       const sales = await salesService.getAll({ startDate: start, endDate: end });
       const matchingSales = sales.filter((entry) => entry.customerId === selectedCustomerId && (entry.remainingAmount ?? 0) > 0);
@@ -561,7 +565,7 @@ export const CreditUpdatePage: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Select
             label="Customer"
-            options={customers.map((customer) => ({ value: customer.id, label: customer.name }))}
+            options={sortedCustomers.map((customer) => ({ value: customer.id, label: customer.name }))}
             value={selectedCustomerId}
             onChange={(e) => setSelectedCustomerId(e.target.value)}
             placeholder="Select customer"

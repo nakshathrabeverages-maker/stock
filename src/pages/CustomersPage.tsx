@@ -248,7 +248,9 @@ export const CustomersPage: React.FC = () => {
     }
   };
 
-  const filteredCustomers = customers.filter((customer) => {
+  const sortedCustomers = [...customers].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+  const filteredCustomers = sortedCustomers.filter((customer) => {
     const query = searchQuery.toLowerCase();
     if (!query) return true;
 

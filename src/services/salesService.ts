@@ -15,7 +15,7 @@ import {
 import { db } from '@/config/firebase';
 import { productService } from '@/services/productService';
 import { SaleEntry } from '@/types';
-import { parseDateInput } from '@/utils/dateUtils';
+import { getEndOfDay, getStartOfDay, parseDateInput } from '@/utils/dateUtils';
 
 const COLLECTION = 'sales_entries';
 const salesChangeListeners = new Set<() => void>();
@@ -281,10 +281,8 @@ export const salesService = {
     try {
       // Normalize date to start of day for matching
       const normalizedDate = parseDateInput(data.date);
-      const dayStart = new Date(normalizedDate);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(normalizedDate);
-      dayEnd.setHours(23, 59, 59, 999);
+      const dayStart = getStartOfDay(normalizedDate);
+      const dayEnd = getEndOfDay(normalizedDate);
 
       // Query for existing sale matching customer, date, and product
       const q = query(

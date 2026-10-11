@@ -9,6 +9,7 @@ import { salesService } from '@/services/salesService';
 import { expenseService } from '@/services/expenseService';
 import { customerService } from '@/services/customerService';
 import { getStartOfDay, getEndOfDay, parseDateInput } from '@/utils/dateUtils';
+import { getSaleCaseQuantity } from '@/utils/salesUtils';
 import {
   ProductionEntry,
   MaterialUsageEntry,
@@ -64,6 +65,10 @@ const REPORT_SORT_OPTIONS: Record<string, { value: string; label: string }[]> = 
     { value: 'type', label: 'Type' },
     { value: 'totalAmount', label: 'Total Amount' },
     { value: 'count', label: 'Count' },
+  ],
+  expensesByMonth: [
+    { value: 'typeLabel', label: 'Type' },
+    { value: 'totalAmount', label: 'Total Amount' },
   ],
   customers: [
     { value: 'name', label: 'Customer Name' },
@@ -128,6 +133,9 @@ const REPORT_FILTER_COLUMNS: Record<string, { value: string; label: string }[]> 
     { value: 'type', label: 'Type' },
     { value: 'totalAmount', label: 'Total Amount' },
     { value: 'count', label: 'Count' },
+  ],
+  expensesByMonth: [
+    { value: 'typeLabel', label: 'Type' },
   ],
   customers: [
     { value: 'name', label: 'Customer Name' },
@@ -246,6 +254,7 @@ export const ReportsPage: React.FC = () => {
   const [expenseByTypeData, setExpenseByTypeData] = useState<
     { type: string; totalAmount: number; count: number }[]
   >([]);
+  const [expenseByMonthData, setExpenseByMonthData] = useState<any[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [productAvailabilityData, setProductAvailabilityData] = useState<Product[]>([]);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
@@ -477,6 +486,41 @@ export const ReportsPage: React.FC = () => {
             count: summary.count,
           }))
         );
+      } else if (type === 'expensesByMonth') {
+        const data = await expenseService.getAll({ startDate: start, endDate: end });
+        const monthColumns = new Map<number, string>();
+        const grouped = new Map<string, { type: string; monthTotals: Map<number, number>; totalAmount: number }>();
+
+        data.forEach((entry) => {
+          const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date);
+          const monthIndex = entryDate.getMonth();
+          const type = entry.type;
+          const monthLabel = MONTH_ABBREVIATIONS[monthIndex];
+          const current = grouped.get(type) || {
+            type,
+            monthTotals: new Map<number, number>(),
+            totalAmount: 0,
+          };
+
+          current.monthTotals.set(monthIndex, (current.monthTotals.get(monthIndex) || 0) + (entry.value ?? 0));
+          current.totalAmount += entry.value ?? 0;
+          monthColumns.set(monthIndex, monthLabel);
+          grouped.set(type, current);
+        });
+
+        const rows = Array.from(grouped.values()).map((group) => {
+          const row: Record<string, any> = {
+            type: group.type,
+            typeLabel: group.type.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()),
+            totalAmount: group.totalAmount,
+          };
+          monthColumns.forEach((monthLabel, monthIndex) => {
+            row[monthLabel] = group.monthTotals.get(monthIndex) || 0;
+          });
+          return row;
+        });
+
+        setExpenseByMonthData(rows.sort((a, b) => a.typeLabel.localeCompare(b.typeLabel)));
       } else if (type === 'revenue') {
         const [sales, expenses] = await Promise.all([
           salesService.getAll({ startDate: start, endDate: end }),
@@ -596,6 +640,16 @@ export const ReportsPage: React.FC = () => {
           { label: 'Count', key: 'count' },
         ];
         break;
+      case 'expensesByMonth':
+        rows = filteredExpenseByMonthRows;
+        headers = [{ label: 'Type', key: 'typeLabel' }];
+        MONTH_ABBREVIATIONS.forEach((month) => {
+          if (filteredExpenseByMonthRows.some((row) => row[month] !== undefined && row[month] > 0)) {
+            headers.push({ label: month, key: month });
+          }
+        });
+        headers.push({ label: 'Total Amount', key: 'totalAmount' });
+        break;
       case 'expenses':
         rows = filteredExpenseRows;
         headers = [
@@ -696,6 +750,7 @@ export const ReportsPage: React.FC = () => {
   );
 
   const salesRows = useMemo(() => {
+    const productsById = new Map<string, Product>(products.map((product) => [product.id, product]));
     const grouped = new Map<
       string,
       {
@@ -724,7 +779,7 @@ export const ReportsPage: React.FC = () => {
         existing.productNames = existing.productNames.includes(productName)
           ? existing.productNames
           : `${existing.productNames}, ${productName}`;
-        existing.totalQuantity += entry.quantity;
+        existing.totalQuantity += getSaleCaseQuantity(entry, productsById);
         existing.totalPrice += entry.totalPrice ?? 0;
         existing.paidAmount += entry.paidAmount ?? 0;
         existing.remainingAmount += entry.remainingAmount ?? 0;
@@ -737,7 +792,7 @@ export const ReportsPage: React.FC = () => {
           customerName,
           customerId: entry.customerId,
           productNames: productName,
-          totalQuantity: entry.quantity,
+          totalQuantity: getSaleCaseQuantity(entry, productsById),
           totalPrice: entry.totalPrice ?? 0,
           paidAmount: entry.paidAmount ?? 0,
           remainingAmount: entry.remainingAmount ?? 0,
@@ -803,6 +858,11 @@ export const ReportsPage: React.FC = () => {
     [expenseByTypeRows, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
   );
 
+  const filteredExpenseByMonthRows = useMemo(
+    () => applyFilterAndSort(expenseByMonthData, ['typeLabel', 'totalAmount']),
+    [expenseByMonthData, reportFilter, filterColumn, filterValue, reportSortKey, reportSortDirection]
+  );
+
   const customerRows = useMemo(
     () => customers.map((customer) => ({ ...customer })),
     [customers]
@@ -854,6 +914,8 @@ export const ReportsPage: React.FC = () => {
         return customerRows;
       case 'expensesByType':
         return expenseByTypeRows;
+      case 'expensesByMonth':
+        return expenseByMonthData;
       case 'stock':
       case 'lowstock':
         return stockRows;
@@ -897,6 +959,7 @@ export const ReportsPage: React.FC = () => {
                 { value: 'creditByMonth', label: 'Credit by Month' },
                 { value: 'expenses', label: 'Expenses' },
                 { value: 'expensesByType', label: 'Expenses by Type' },
+                { value: 'expensesByMonth', label: 'Expenses by Month' },
                 { value: 'customers', label: 'Customers List' },
                 { value: 'revenue', label: 'Revenue Summary' },
                 { value: 'stock', label: 'Stock Report' },
@@ -1321,6 +1384,48 @@ export const ReportsPage: React.FC = () => {
               </table>
               <div className="mt-4 text-right font-semibold">
                 Total Expenses: ₹{expenseByTypeRows.reduce((sum, entry) => sum + (entry.totalAmount ?? 0), 0).toFixed(2)}
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-600">No expense data found for the selected period.</p>
+          )}
+        </Card>
+      )}
+
+      {reportType === 'expensesByMonth' && (
+        <Card title="Expenses by Month" subtitle="Expense totals grouped by type and month">
+          {filteredExpenseByMonthRows.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-semibold">Type</th>
+                    {MONTH_ABBREVIATIONS.map((month) => {
+                      const hasData = filteredExpenseByMonthRows.some((row) => row[month] !== undefined && row[month] > 0);
+                      return hasData ? (
+                        <th key={month} className="px-4 py-2 text-right font-semibold">{month}</th>
+                      ) : null;
+                    })}
+                    <th className="px-4 py-2 text-right font-semibold bg-blue-50">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredExpenseByMonthRows.map((row) => (
+                    <tr key={row.type}>
+                      <td className="px-4 py-2 font-medium">{row.typeLabel}</td>
+                      {MONTH_ABBREVIATIONS.map((month) => {
+                        const hasData = filteredExpenseByMonthRows.some((item) => item[month] !== undefined && item[month] > 0);
+                        return hasData ? (
+                          <td key={month} className="px-4 py-2 text-right">₹{Number(row[month] ?? 0).toFixed(2)}</td>
+                        ) : null;
+                      })}
+                      <td className="px-4 py-2 text-right font-semibold bg-blue-50">₹{Number(row.totalAmount ?? 0).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-4 text-right font-semibold">
+                Total Expenses: ₹{expenseByMonthData.reduce((sum, row) => sum + Number(row.totalAmount ?? 0), 0).toFixed(2)}
               </div>
             </div>
           ) : (

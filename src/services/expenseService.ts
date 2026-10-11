@@ -13,10 +13,24 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { ExpenseEntry } from '@/types';
+import { parseDateInput } from '@/utils/dateUtils';
 
 const COLLECTION = 'expenses';
+const expenseChangeListeners = new Set<() => void>();
+const parseExpenseDate = (value: any) => parseDateInput(value?.toDate?.() ?? value);
+
+const notifyExpensesChanged = () => {
+  expenseChangeListeners.forEach((listener) => listener());
+};
 
 export const expenseService = {
+  subscribeToExpenseChanges(listener: () => void) {
+    expenseChangeListeners.add(listener);
+    return () => {
+      expenseChangeListeners.delete(listener);
+    };
+  },
+
   async getAll(filters?: { startDate?: Date; endDate?: Date; type?: string }) {
     try {
       const constraints: any[] = [];
@@ -31,7 +45,7 @@ export const expenseService = {
       return querySnapshot.docs.map((doc) => ({
         ...doc.data(),
         id: doc.id,
-        date: doc.data().date?.toDate?.() || new Date(),
+        date: parseExpenseDate(doc.data().date),
         createdAt: doc.data().createdAt?.toDate?.() || new Date(),
         updatedAt: doc.data().updatedAt?.toDate?.() || new Date(),
       })) as ExpenseEntry[];
@@ -47,7 +61,7 @@ export const expenseService = {
       return {
         ...docSnapshot.data(),
         id: docSnapshot.id,
-        date: docSnapshot.data().date?.toDate?.() || new Date(),
+        date: parseExpenseDate(docSnapshot.data().date),
         createdAt: docSnapshot.data().createdAt?.toDate?.() || new Date(),
         updatedAt: docSnapshot.data().updatedAt?.toDate?.() || new Date(),
       } as ExpenseEntry;
@@ -66,6 +80,7 @@ export const expenseService = {
         createdAt: now,
         updatedAt: now,
       });
+      notifyExpensesChanged();
 
       return {
         ...data,
@@ -85,6 +100,7 @@ export const expenseService = {
       const updateData: any = { ...data, updatedAt: now };
       if (data.date) updateData.date = Timestamp.fromDate(data.date);
       await updateDoc(doc(db, COLLECTION, id), updateData);
+      notifyExpensesChanged();
       return { success: true };
     } catch (error) {
       throw new Error(`Failed to update expense: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -94,6 +110,7 @@ export const expenseService = {
   async delete(id: string) {
     try {
       await deleteDoc(doc(db, COLLECTION, id));
+      notifyExpensesChanged();
       return { success: true };
     } catch (error) {
       throw new Error(`Failed to delete expense: ${error instanceof Error ? error.message : 'Unknown error'}`);

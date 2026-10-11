@@ -5,7 +5,7 @@ import { expenseService } from '@/services/expenseService';
 import { userService } from '@/services/userService';
 import { usePageLock } from '@/hooks/usePageLock';
 import { ExpenseEntry } from '@/types';
-import { parseDateInput } from '@/utils/dateUtils';
+import { formatDateInputValue, parseDateInput } from '@/utils/dateUtils';
 
 const EXPENSE_TYPES = [
   { value: 'rawmaterial', label: 'Raw Material' },
@@ -14,6 +14,7 @@ const EXPENSE_TYPES = [
   { value: 'plant_maintenance', label: 'Plant Maintenance' },
   { value: 'machine_maintenance', label: 'Machine Maintenance' },
   { value: 'transport', label: 'Transport' },
+  { value: 'company_vehicle', label: 'Company Vehicle' },
   { value: 'food', label: 'Food' },
   { value: 'loading_charges', label: 'Loading Charges' },
   { value: 'courier_charges', label: 'Courier Charges' },
@@ -135,22 +136,62 @@ export const ExpensesPage: React.FC = () => {
     }
   };
 
-  const filteredEntries = useMemo(() => {
-    const startDate = startDateFilter ? new Date(startDateFilter) : null;
-    const endDate = endDateFilter ? new Date(endDateFilter) : null;
-    if (endDate) {
-      endDate.setHours(23, 59, 59, 999);
+  const handleDeleteDateRange = async () => {
+    if (isPageLocked) {
+      setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Deletes are disabled.`);
+      return;
     }
 
+    if (!startDateFilter || !endDateFilter) {
+      setError('Select both a start date and an end date to delete expenses by date range.');
+      return;
+    }
+
+    if (startDateFilter > endDateFilter) {
+      setError('Start date cannot be later than the end date.');
+      return;
+    }
+
+    const entriesInDateRange = entries.filter((entry) => {
+      const entryDate = formatDateInputValue(entry.date);
+      return entryDate >= startDateFilter && entryDate <= endDateFilter;
+    });
+
+    if (!entriesInDateRange.length) {
+      setError('No expense entries found in the selected date range.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${entriesInDateRange.length} expense ${entriesInDateRange.length === 1 ? 'entry' : 'entries'} from ${startDateFilter} to ${endDateFilter}?`
+    );
+    if (!confirmed) return;
+
+    try {
+      setLoading(true);
+      for (const entry of entriesInDateRange) {
+        await expenseService.delete(entry.id);
+      }
+      await fetchExpenses();
+      setError('');
+      setSuccess(`Deleted ${entriesInDateRange.length} expense ${entriesInDateRange.length === 1 ? 'entry' : 'entries'} from the selected date range.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete expenses in the selected date range');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredEntries = useMemo(() => {
     return entries
       .filter((entry) => {
-        const entryDate = new Date(entry.date);
+        const entryDate = formatDateInputValue(entry.date);
         const searchValue = searchFilter.trim().toLowerCase();
         const matchesSearch = !searchValue || [entry.subtype, entry.vendor, entry.remarks]
           .some((value) => value?.toLowerCase().includes(searchValue));
         const matchesType = typeFilter === 'all' || entry.type === typeFilter;
-        const matchesStart = startDate ? entryDate >= startDate : true;
-        const matchesEnd = endDate ? entryDate <= endDate : true;
+        const matchesStart = startDateFilter ? entryDate >= startDateFilter : true;
+        const matchesEnd = endDateFilter ? entryDate <= endDateFilter : true;
         return matchesSearch && matchesType && matchesStart && matchesEnd;
       })
       .sort((a, b) => {
@@ -254,6 +295,8 @@ export const ExpensesPage: React.FC = () => {
         remarks: 'remarks',
         notes: 'remarks',
         description: 'remarks',
+        companyvehicle: 'type',
+        company_vehicle: 'type',
       };
       normalizedHeaders.set(header, aliasMap[header] ?? header);
     });
@@ -281,6 +324,11 @@ export const ExpensesPage: React.FC = () => {
     const validRows: any[] = [];
     const issues: Array<{ rowNumber: number; message: string }> = [];
     const expenseTypeValues = EXPENSE_TYPES.map((t) => t.value);
+    const normalizeExpenseType = (value: string) => value
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_');
+
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
       const { date, type, subtype, vendor, value, remarks } = row;
@@ -297,7 +345,8 @@ export const ExpensesPage: React.FC = () => {
         issues.push({ rowNumber, message: 'Missing expense type field.' });
         continue;
       }
-      const matchedType = expenseTypeValues.find((t) => t.toLowerCase() === type.toLowerCase());
+      const normalizedType = normalizeExpenseType(type);
+      const matchedType = expenseTypeValues.find((t) => t.toLowerCase() === normalizedType);
       if (!matchedType) {
         issues.push({
           rowNumber,
@@ -436,7 +485,7 @@ export const ExpensesPage: React.FC = () => {
     }
 
     const rows = filteredEntries.map((entry) => ({
-      Date: new Date(entry.date).toLocaleDateString(),
+      Date: formatDateInputValue(entry.date),
       Type: entry.type.replace(/_/g, ' '),
       Subtype: entry.subtype || '',
       Vendor: entry.vendor || '',
@@ -500,7 +549,7 @@ export const ExpensesPage: React.FC = () => {
             </div>
             <div className="min-w-[180px]">
               <Input
-                label="Start Date"
+                label="Start Date (IST)"
                 type="date"
                 value={startDateFilter}
                 onChange={(e) => setStartDateFilter(e.target.value)}
@@ -508,7 +557,7 @@ export const ExpensesPage: React.FC = () => {
             </div>
             <div className="min-w-[180px]">
               <Input
-                label="End Date"
+                label="End Date (IST)"
                 type="date"
                 value={endDateFilter}
                 onChange={(e) => setEndDateFilter(e.target.value)}
@@ -536,6 +585,16 @@ export const ExpensesPage: React.FC = () => {
                 </Button>
               </div>
             )}
+            <div className="flex items-end">
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={handleDeleteDateRange}
+                disabled={isPageLocked || !startDateFilter || !endDateFilter}
+              >
+                Delete Date Range
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -561,7 +620,7 @@ export const ExpensesPage: React.FC = () => {
             <tbody className="divide-y">
               {filteredEntries.map((e) => (
                 <tr key={e.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 text-sm text-gray-800">{new Date(e.date).toLocaleDateString()}</td>
+                  <td className="px-6 py-4 text-sm text-gray-800">{formatDateInputValue(e.date)}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.type}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.subtype || '-'}</td>
                   <td className="px-6 py-4 text-sm text-gray-800">{e.vendor || '-'}</td>
@@ -603,8 +662,8 @@ export const ExpensesPage: React.FC = () => {
           <Input
             label="Date"
             type="date"
-            value={formData.date instanceof Date ? formData.date.toISOString().split('T')[0] : formData.date}
-            onChange={(e) => setFormData({ ...formData, date: new Date(e.target.value) })}
+            value={formatDateInputValue(formData.date)}
+            onChange={(e) => setFormData({ ...formData, date: parseDateInput(e.target.value) })}
           />
 
           <Select

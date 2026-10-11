@@ -13,6 +13,6 @@ export { CustomersPage } from './CustomersPage';
 export { SalesPage } from './SalesPage';
 export { OrdersPage } from './OrdersPage';
 export { ExpensesPage } from './ExpensesPage';
-export { AnalyticsPage } from './UpdateQueriesPage';
+export { GraphsPage } from './GraphsPage';
 export { InsightsPage } from './InsightsPage';
 export { PageControlPage } from './PageControlPage';

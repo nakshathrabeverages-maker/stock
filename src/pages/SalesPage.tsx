@@ -10,6 +10,7 @@ import { authService } from '@/services/authService';
 import { usePageLock } from '@/hooks/usePageLock';
 import { SaleEntry, Product, Customer } from '@/types';
 import { parseDateInput, formatDateInputValue, getStartOfDay, getEndOfDay } from '@/utils/dateUtils';
+import { getSaleCaseQuantity } from '@/utils/salesUtils';
 
 interface BulkProductRow {
   productId: string;
@@ -35,6 +36,13 @@ export const SalesPage: React.FC = () => {
   const [csvUpsertText, setCsvUpsertText] = useState('');
   const [csvUpsertFileName, setCsvUpsertFileName] = useState('');
   const [isUpsertImporting, setIsUpsertImporting] = useState(false);
+  const [upsertProgress, setUpsertProgress] = useState<{
+    processed: number;
+    total: number;
+    created: number;
+    updated: number;
+    failed: number;
+  } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [importJsonText, setImportJsonText] = useState('');
   const [importFileName, setImportFileName] = useState('');
@@ -190,8 +198,8 @@ export const SalesPage: React.FC = () => {
       throw new Error(`Row ${index + 1}: quantity must be greater than zero.`);
     }
 
-    if (!Number.isFinite(pricePerCase) || pricePerCase <= 0) {
-      throw new Error(`Row ${index + 1}: price per case must be greater than zero.`);
+    if (!Number.isFinite(pricePerCase) || pricePerCase < 0) {
+      throw new Error(`Row ${index + 1}: price per case must be zero or greater.`);
     }
 
     const totalPrice = quantity * pricePerCase;
@@ -565,6 +573,7 @@ export const SalesPage: React.FC = () => {
     const validRows: Array<any> = [];
 
     rows.forEach((row, index) => {
+      const rowNumber = index + 2;
       try {
         const dateStr = row.date?.trim();
         if (!dateStr) throw new Error('Date is required');
@@ -580,20 +589,21 @@ export const SalesPage: React.FC = () => {
         if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Quantity must be > 0');
 
         const pricePerCase = Number(row.pricePerCase?.trim() || 0);
-        if (!Number.isFinite(pricePerCase) || pricePerCase <= 0) throw new Error('Price per case must be > 0');
+        if (!Number.isFinite(pricePerCase) || pricePerCase < 0) throw new Error('Price per case must be >= 0');
 
         const paidAmount = Number(row.paidAmount?.trim() || 0);
         if (!Number.isFinite(paidAmount) || paidAmount < 0) throw new Error('Paid amount must be >= 0');
 
         validRows.push({
           ...row,
+          rowNumber,
           date: parsedDate,
           quantity,
           pricePerCase,
           paidAmount,
         });
       } catch (err) {
-        errors.push(`Row ${index + 1}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        errors.push(`Row ${rowNumber}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     });
 
@@ -637,6 +647,14 @@ export const SalesPage: React.FC = () => {
 
       const { validRows, errors } = validateSalesUpsertRows(rawRows);
 
+      setUpsertProgress({
+        processed: errors.length,
+        total: rawRows.length,
+        created: 0,
+        updated: 0,
+        failed: errors.length,
+      });
+
       if (errors.length > 0 && validRows.length === 0) {
         setError(`CSV validation failed:\n${errors.join('\n')}`);
         setIsUpsertImporting(false);
@@ -646,29 +664,28 @@ export const SalesPage: React.FC = () => {
       const userId = (user as any)?.id || authService.getCurrentUser()?.uid;
       if (!userId) throw new Error('User ID not found');
 
-      let successCount = 0;
-      let updateCount = 0;
-      const importErrors: string[] = [];
+      const preparedRows: Array<{ row: any; payload: Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'> }> = [];
+      const preflightErrors = [...errors];
 
-      for (const row of validRows) {
-        try {
-          const productId = resolveProductId(row, latestProducts);
-          const customerId = resolveCustomerId(row, latestCustomers);
+      validRows.forEach((row) => {
+        const productId = resolveProductId(row, latestProducts);
+        const customerId = resolveCustomerId(row, latestCustomers);
 
-          if (!productId) {
-            importErrors.push(`Row: Product "${row.product}" not found`);
-            continue;
-          }
+        if (!productId) {
+          preflightErrors.push(`Row ${row.rowNumber}: ${row.date.toLocaleDateString()} | ${row.customer} | ${row.product} | Qty ${row.quantity}: product not found`);
+          return;
+        }
 
-          if (!customerId) {
-            importErrors.push(`Row: Customer "${row.customer}" not found`);
-            continue;
-          }
+        if (!customerId) {
+          preflightErrors.push(`Row ${row.rowNumber}: ${row.date.toLocaleDateString()} | ${row.customer} | ${row.product} | Qty ${row.quantity}: customer not found`);
+          return;
+        }
 
-          const totalPrice = row.quantity * row.pricePerCase;
-          const remainingAmount = Math.max(totalPrice - row.paidAmount, 0);
-
-          const payload: Omit<SaleEntry, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'> = {
+        const totalPrice = row.quantity * row.pricePerCase;
+        const remainingAmount = Math.max(totalPrice - row.paidAmount, 0);
+        preparedRows.push({
+          row,
+          payload: {
             date: row.date,
             productId,
             customerId,
@@ -679,8 +696,53 @@ export const SalesPage: React.FC = () => {
             remainingAmount,
             paymentStatus: remainingAmount <= 0 ? 'done' : 'pending',
             remarks: row.remarks || '',
-          };
+          },
+        });
+      });
 
+      const latestSales = await salesService.getAll();
+      const existingByKey = new Map<string, { quantity: number }>();
+      latestSales.forEach((sale) => {
+        const key = `${sale.customerId}|${sale.productId}|${formatDateInputValue(sale.date)}`;
+        if (!existingByKey.has(key)) existingByKey.set(key, { quantity: sale.quantity });
+      });
+      const stockByProduct = new Map(latestProducts.map((product) => [product.id, product.currentStock ?? 0]));
+
+      preparedRows.forEach(({ row, payload }) => {
+        const key = `${payload.customerId}|${payload.productId}|${formatDateInputValue(payload.date)}`;
+        const existing = existingByKey.get(key);
+        const stockBefore = stockByProduct.get(payload.productId) ?? 0;
+        const stockDelta = payload.quantity - (existing?.quantity ?? 0);
+
+        if (stockDelta > stockBefore) {
+          const product = latestProducts.find((item) => item.id === payload.productId);
+          preflightErrors.push(
+            `Row ${row.rowNumber}: ${formatDateInputValue(payload.date)} | ${row.customer} | ${product?.name || row.product} | Qty ${payload.quantity}: insufficient stock (needs ${stockDelta}, available ${stockBefore})`
+          );
+        }
+
+        stockByProduct.set(payload.productId, stockBefore - stockDelta);
+        existingByKey.set(key, { quantity: payload.quantity });
+      });
+
+      if (preflightErrors.length > 0) {
+        setUpsertProgress({
+          processed: rawRows.length,
+          total: rawRows.length,
+          created: 0,
+          updated: 0,
+          failed: preflightErrors.length,
+        });
+        setError(`CSV validation failed. No sales were imported:\n${preflightErrors.join('\n')}`);
+        return;
+      }
+
+      let successCount = 0;
+      let updateCount = 0;
+      const importErrors: string[] = [];
+
+      for (const { row, payload } of preparedRows) {
+        try {
           const result = await salesService.upsert(payload, userId);
           if ((result as any).action === 'updated') {
             updateCount++;
@@ -688,7 +750,18 @@ export const SalesPage: React.FC = () => {
             successCount++;
           }
         } catch (err) {
-          importErrors.push(`Row: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          importErrors.push(
+            `Row ${row.rowNumber}: ${formatDateInputValue(payload.date)} | ${row.customer} | ${row.product} | Qty ${row.quantity}: ${err instanceof Error ? err.message : 'Unknown error'}`
+          );
+          break;
+        } finally {
+          setUpsertProgress({
+            processed: errors.length + successCount + updateCount + importErrors.length,
+            total: rawRows.length,
+            created: successCount,
+            updated: updateCount,
+            failed: errors.length + importErrors.length,
+          });
         }
       }
 
@@ -699,7 +772,7 @@ export const SalesPage: React.FC = () => {
       const message = `Upsert complete: ${successCount} created, ${updateCount} updated${importErrors.length > 0 ? `, ${importErrors.length} failed` : ''}`;
       setSuccessMessage(message);
       if (importErrors.length > 0) {
-        setError(`Some rows failed:\n${importErrors.slice(0, 5).join('\n')}${importErrors.length > 5 ? `\n... and ${importErrors.length - 5} more` : ''}`);
+        setError(`Import stopped after a write failed. Earlier rows may already have been saved:\n${importErrors.join('\n')}`);
       }
 
       await fetchData();
@@ -749,9 +822,9 @@ export const SalesPage: React.FC = () => {
       return;
     }
 
-    const validRows = bulkProductRows.filter((row) => row.productId && row.quantity > 0 && row.pricePerCase > 0);
+    const validRows = bulkProductRows.filter((row) => row.productId && row.quantity > 0 && row.pricePerCase >= 0);
     if (!validRows.length) {
-      setError('Please add at least one product with valid quantity and price');
+      setError('Please add at least one product with valid quantity and a non-negative price');
       return;
     }
 
@@ -896,8 +969,8 @@ export const SalesPage: React.FC = () => {
       setError(`This page is frozen until ${lockDate?.toLocaleDateString()}. Updates are disabled.`);
       return;
     }
-    if (!formData.productId || !formData.customerId || formData.quantity <= 0 || formData.pricePerCase <= 0) {
-      setError('Please select a product, customer, and enter valid quantity and price');
+    if (!formData.productId || !formData.customerId || formData.quantity <= 0 || !Number.isFinite(formData.pricePerCase) || formData.pricePerCase < 0) {
+      setError('Please select a product and customer, enter a valid quantity, and use a price of zero or greater');
       return;
     }
 
@@ -998,7 +1071,8 @@ export const SalesPage: React.FC = () => {
   if (loading) return <Loading fullScreen message="Loading sales..." />;
 
   const productOptions = products.map((product) => ({ value: product.id, label: product.name }));
-  const customerOptions = customers.map((customer) => ({ value: customer.id, label: customer.name }));
+  const sortedCustomers = [...customers].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const customerOptions = sortedCustomers.map((customer) => ({ value: customer.id, label: customer.name }));
 
   return (
     <Layout title="Sales" subtitle="Record sales by customer and product">
@@ -1374,6 +1448,24 @@ date,customer,product,quantity,pricePerCase,paidAmount,remarks
             />
           </label>
 
+          {isUpsertImporting && upsertProgress && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900" role="status" aria-live="polite">
+              <div className="flex items-center justify-between font-semibold">
+                <span>Processing sales</span>
+                <span>{upsertProgress.processed} of {upsertProgress.total} records</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-blue-100">
+                <div
+                  className="h-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${upsertProgress.total ? (upsertProgress.processed / upsertProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs">
+                {upsertProgress.created} added, {upsertProgress.updated} updated, {upsertProgress.failed} failed
+              </p>
+            </div>
+          )}
+
           <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-gray-700">
             <p className="font-semibold mb-2 text-blue-900">Column Requirements:</p>
             <ul className="space-y-1 mb-2">
@@ -1381,7 +1473,7 @@ date,customer,product,quantity,pricePerCase,paidAmount,remarks
               <li><span className="font-medium text-red-600">Customer*</span> - Customer name or ID</li>
               <li><span className="font-medium text-red-600">Product*</span> - Product name or ID</li>
               <li><span className="font-medium text-red-600">Quantity*</span> - Positive number</li>
-              <li><span className="font-medium text-red-600">Price Per Case*</span> - Positive number</li>
+              <li><span className="font-medium text-red-600">Price Per Case*</span> - Zero or greater</li>
               <li><span className="font-medium">Paid Amount</span> - Optional (default: 0)</li>
               <li><span className="font-medium">Remarks</span> - Optional</li>
             </ul>

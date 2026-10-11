@@ -17,12 +17,14 @@ export const customerService = {
   async getAll() {
     try {
       const querySnapshot = await getDocs(collection(db, COLLECTION));
-      return querySnapshot.docs.map((doc) => ({
-        ...doc.data(),
-        id: doc.id,
-        createdAt: doc.data().createdAt?.toDate?.() || new Date(),
-        updatedAt: doc.data().updatedAt?.toDate?.() || new Date(),
-      })) as Customer[];
+      return (querySnapshot.docs
+        .map((doc) => ({
+          ...doc.data(),
+          id: doc.id,
+          createdAt: doc.data().createdAt?.toDate?.() || new Date(),
+          updatedAt: doc.data().updatedAt?.toDate?.() || new Date(),
+        })) as Customer[])
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     } catch (error) {
       throw new Error(`Failed to fetch customers: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }

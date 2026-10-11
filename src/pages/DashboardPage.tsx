@@ -9,7 +9,9 @@ import { expenseService } from '@/services/expenseService';
 import { settingsService } from '@/services/settingsService';
 import { orderService } from '@/services/orderService';
 import { customerService } from '@/services/customerService';
+import { getEndOfDay, getISTDateParts, getStartOfDay } from '@/utils/dateUtils';
 import { Product, RawMaterial, OrderEntry, Customer, SaleEntry } from '@/types';
+import { getSaleCaseQuantity } from '@/utils/salesUtils';
 
 export const DashboardPage: React.FC = () => {
   const [thisMonthProduction, setThisMonthProduction] = useState<number>(0);
@@ -66,8 +68,12 @@ export const DashboardPage: React.FC = () => {
 
   const getPreviousMonthRange = () => {
     const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    const { year, month } = getISTDateParts(now);
+    const previousMonth = month === 1 ? 12 : month - 1;
+    const previousYear = month === 1 ? year - 1 : year;
+    const start = getStartOfDay(`${previousYear}-${String(previousMonth).padStart(2, '0')}-01`);
+    const daysInPreviousMonth = new Date(Date.UTC(previousYear, previousMonth, 0)).getUTCDate();
+    const end = getEndOfDay(`${previousYear}-${String(previousMonth).padStart(2, '0')}-${daysInPreviousMonth}`);
     return { start, end };
   };
 
@@ -106,6 +112,7 @@ export const DashboardPage: React.FC = () => {
         totalSales: number;
         totalCredit: number;
         totalQuantity: number;
+        caseSalesValue: number;
         weightedPriceRatio: number;
         orderCount: number;
       }
@@ -129,18 +136,20 @@ export const DashboardPage: React.FC = () => {
       if (existing) {
         existing.totalSales += totalPrice;
         existing.totalCredit = customerOutstandingCredit;
-        existing.totalQuantity += sale.quantity;
-        existing.weightedPriceRatio += (sale.quantity ?? 0) * priceRatio;
-        existing.orderCount += 1;
+        existing.totalQuantity += getSaleCaseQuantity(sale, productMap);
+        existing.caseSalesValue += getSaleCaseQuantity(sale, productMap) > 0 ? totalPrice : 0;
+        existing.weightedPriceRatio += getSaleCaseQuantity(sale, productMap) * priceRatio;
+        existing.orderCount += getSaleCaseQuantity(sale, productMap) > 0 ? 1 : 0;
       } else {
         grouped.set(customerId, {
           customerId,
           customerName,
           totalSales: totalPrice,
           totalCredit: customerOutstandingCredit,
-          totalQuantity: sale.quantity,
-          weightedPriceRatio: (sale.quantity ?? 0) * priceRatio,
-          orderCount: 1,
+          totalQuantity: getSaleCaseQuantity(sale, productMap),
+          caseSalesValue: getSaleCaseQuantity(sale, productMap) > 0 ? totalPrice : 0,
+          weightedPriceRatio: getSaleCaseQuantity(sale, productMap) * priceRatio,
+          orderCount: getSaleCaseQuantity(sale, productMap) > 0 ? 1 : 0,
         });
       }
     });
@@ -154,7 +163,7 @@ export const DashboardPage: React.FC = () => {
       const saleRatio = totalSalesValue ? item.totalSales / totalSalesValue : 0;
       const creditRatio = totalCreditValue ? item.totalCredit / totalCreditValue : 0;
       const priceRatio = item.totalQuantity ? item.weightedPriceRatio / item.totalQuantity : 0;
-      const avgPricePerCase = item.totalQuantity ? item.totalSales / item.totalQuantity : 0;
+      const avgPricePerCase = item.totalQuantity ? item.caseSalesValue / item.totalQuantity : 0;
       const avgCasesPerOrder = item.orderCount ? item.totalQuantity / item.orderCount : 0;
       const score = saleRatio * 6 + (1 - creditRatio) * 2 + priceRatio * 1 + avgCasesPerOrder / 1000;
       return {
@@ -178,13 +187,13 @@ export const DashboardPage: React.FC = () => {
     const fetchDashboardData = async () => {
       try {
         setLoading(true);
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999);
+        const todayStart = getStartOfDay(new Date());
+        const todayEnd = getEndOfDay(new Date());
+        const now = new Date();
+        const nowIST = getISTDateParts(now);
 
         const [productionEntries, lowStock, sales, expenses, capitalValue, products, customers, allOrders] = await Promise.all([
-          productionService.getAll({ startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1), endDate: new Date() }),
+          productionService.getAll({ startDate: getStartOfDay(`${nowIST.year}-${String(nowIST.month).padStart(2, '0')}-01`), endDate: now }),
           rawMaterialService.getLowStockItems(),
           salesService.getAll(),
           expenseService.getAll(),
@@ -214,10 +223,9 @@ export const DashboardPage: React.FC = () => {
         const totalCreditVal = sales.reduce((sum, item) => sum + (item.remainingAmount ?? 0), 0);
         const totalExpensesVal = expenses.reduce((sum, item) => sum + (item.value ?? 0), 0);
 
-        const now = new Date();
         const thisMonthCreditVal = sales.reduce((sum, item) => {
-          const d = new Date(item.date as any);
-          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+          const d = getISTDateParts(new Date(item.date as any));
+          return d.month === nowIST.month && d.year === nowIST.year
             ? sum + (item.remainingAmount ?? 0)
             : sum;
         }, 0);
@@ -230,26 +238,27 @@ export const DashboardPage: React.FC = () => {
 
         const topPrev = computeTopCustomer(prevMonthSales, customers, products, sales);
         const topOverall = computeTopCustomer(sales, customers, products, sales, true);
+        const productsById = new Map<string, Product>(products.map((product) => [product.id, product]));
 
         setTopPrevMonthCustomer(topPrev);
         setTopOverallCustomer(topOverall);
 
         // current month calculations
         const cmSales = sales.reduce((sum, item) => {
-          const d = new Date(item.date as any);
-          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+          const d = getISTDateParts(new Date(item.date as any));
+          return d.month === nowIST.month && d.year === nowIST.year
             ? sum + (item.totalPrice ?? 0)
             : sum;
         }, 0);
         const cmSalesCases = sales.reduce((sum, item) => {
-          const d = new Date(item.date as any);
-          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-            ? sum + (item.quantity ?? 0)
+          const d = getISTDateParts(new Date(item.date as any));
+          return d.month === nowIST.month && d.year === nowIST.year
+            ? sum + getSaleCaseQuantity(item, productsById)
             : sum;
         }, 0);
         const cmExpenses = expenses.reduce((sum, item) => {
-          const d = new Date(item.date as any);
-          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+          const d = getISTDateParts(new Date(item.date as any));
+          return d.month === nowIST.month && d.year === nowIST.year
             ? sum + (item.value ?? 0)
             : sum;
         }, 0);
@@ -320,7 +329,26 @@ export const DashboardPage: React.FC = () => {
       }
     };
 
+    const unsubscribe = expenseService.subscribeToExpenseChanges(() => {
+      fetchDashboardData();
+    });
+
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') {
+        fetchDashboardData();
+      }
+    };
+
+    window.addEventListener('focus', refreshOnReturn);
+    document.addEventListener('visibilitychange', refreshOnReturn);
+
     fetchDashboardData();
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('focus', refreshOnReturn);
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+    };
   }, []);
 
   useEffect(() => {
@@ -393,7 +421,7 @@ export const DashboardPage: React.FC = () => {
             <div className="rounded-2xl bg-white p-5 shadow-sm border border-slate-200">
               <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Total Expenses</p>
               <div className="mt-3 text-3xl font-bold text-red-600">₹{formatAmount(totalExpenses)}</div>
-              <p className="mt-2 text-sm text-slate-500">All expense value</p>
+              <p className="mt-2 text-sm text-slate-500">All expense value (all time)</p>
             </div>
 
             <div className="rounded-2xl bg-white p-5 shadow-sm border border-slate-200">

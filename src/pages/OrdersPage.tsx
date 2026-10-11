@@ -8,6 +8,7 @@ import { userService } from '@/services/userService';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services/authService';
 import { usePageLock } from '@/hooks/usePageLock';
+import { getEndOfDay, getStartOfDay } from '@/utils/dateUtils';
 import { OrderEntry, Product, Customer } from '@/types';
 
 interface BulkProductRow {
@@ -251,11 +252,8 @@ export const OrdersPage: React.FC = () => {
   const isFormValid = missingFields.length === 0;
 
   const filteredEntries = useMemo(() => {
-    const startDate = startDateFilter ? new Date(startDateFilter) : null;
-    const endDate = endDateFilter ? new Date(endDateFilter) : null;
-    if (endDate) {
-      endDate.setHours(23, 59, 59, 999);
-    }
+    const startDate = startDateFilter ? getStartOfDay(startDateFilter) : null;
+    const endDate = endDateFilter ? getEndOfDay(endDateFilter) : null;
 
     return entries.filter((entry) => {
       const entryDate = new Date(entry.orderDate);

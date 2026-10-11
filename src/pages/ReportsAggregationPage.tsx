@@ -5,6 +5,7 @@ import { salesService } from '@/services/salesService';
 import { customerService } from '@/services/customerService';
 import { Product, SaleEntry, Customer } from '@/types';
 import { getStartOfDay, getEndOfDay } from '@/utils/dateUtils';
+import { getSaleCaseQuantity } from '@/utils/salesUtils';
 
 const REPORT_SUBTYPE_OPTIONS = [
   { value: 'customerByAmount', label: 'Sales by Customer - Amount' },
@@ -136,6 +137,7 @@ export const ReportsAggregationPage: React.FC = () => {
       setProducts(latestProducts);
 
       const grouped = new Map<string, any>();
+      const productsById = new Map<string, Product>(latestProducts.map((product) => [product.id, product]));
 
       sales.forEach((entry) => {
         const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date as any);
@@ -145,7 +147,7 @@ export const ReportsAggregationPage: React.FC = () => {
         const product = latestProducts.find((p) => p.id === entry.productId);
         const customerName = customer?.name || 'Unknown Customer';
         const productName = product?.name || 'Unknown Product';
-        const quantity = Number(entry.quantity ?? 0);
+        const quantity = getSaleCaseQuantity(entry, productsById);
         const totalAmount = Number(entry.totalPrice ?? 0);
         const creditAmount = Number(entry.remainingAmount ?? 0);
 

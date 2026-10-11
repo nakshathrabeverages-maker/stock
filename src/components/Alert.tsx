@@ -28,7 +28,7 @@ export const Alert: React.FC<AlertProps> = ({ type = 'info', title, message, onC
         <span className="text-xl font-bold">{typeIcons[type]}</span>
         <div className="flex-1">
           {title && <h4 className="font-semibold mb-1">{title}</h4>}
-          <p className="text-sm">{message}</p>
+          <p className="text-sm whitespace-pre-wrap break-words">{message}</p>
         </div>
         {onClose && (
           <button

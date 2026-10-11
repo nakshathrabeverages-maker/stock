@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { authService } from '@/services/authService';
 import { userService } from '@/services/userService';
@@ -20,10 +20,11 @@ import {
   SalesPage,
   OrdersPage,
   ExpensesPage,
-  AnalyticsPage,
-  InsightsPage,
   PageControlPage,
 } from '@/pages';
+
+const GraphsPage = lazy(() => import('@/pages/GraphsPage').then((module) => ({ default: module.GraphsPage })));
+const InsightsPage = lazy(() => import('@/pages/InsightsPage').then((module) => ({ default: module.InsightsPage })));
 
 const ProtectedRoute: React.FC<{
   children: React.ReactNode;
@@ -195,19 +196,24 @@ function App() {
         />
 
         <Route
-          path="/analytics"
+          path="/graphs"
           element={
             <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
-              <AnalyticsPage />
+              <Suspense fallback={<Loading fullScreen message="Loading graphs..." />}>
+                <GraphsPage />
+              </Suspense>
             </ProtectedRoute>
           }
         />
+        <Route path="/analytics" element={<Navigate to="/graphs" replace />} />
 
         <Route
           path="/insights"
           element={
             <ProtectedRoute requiredRoles={['admin', 'operator', 'co-admin']}>
-              <InsightsPage />
+              <Suspense fallback={<Loading fullScreen message="Loading insights..." />}>
+                <InsightsPage />
+              </Suspense>
             </ProtectedRoute>
           }
         />
